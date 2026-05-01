@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     token_encryption_key: str
     ibkr_client_id: str = ""
     ibkr_client_secret: str = ""
+    ibkr_redirect_uri: str = "http://localhost:3000/api/ibkr/callback"
     redis_url: str = "redis://localhost:6379"
     cors_origins: str = "http://localhost:3000"
 
