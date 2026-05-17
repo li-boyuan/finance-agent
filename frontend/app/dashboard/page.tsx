@@ -49,16 +49,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function init() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push("/login");
-        return;
-      }
-      setUser(session.user);
-      setToken(session.access_token);
-    }
-    init();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (!session) {
+          router.push("/login");
+          return;
+        }
+        setUser(session.user);
+        setToken(session.access_token);
+      },
+    );
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchData = useCallback(async () => {

@@ -25,7 +25,7 @@ async def get_ibkr_auth_url(
     ip: str = Depends(get_client_ip),
 ):
     user_id = user["sub"]
-    log_access(user_id, "get_ibkr_auth_url", "broker_connection", ip_address=ip)
+    log_access(user_id, "get_ibkr_auth_url", "account_connection", ip_address=ip)
     state = secrets.token_urlsafe(32)
     url = get_authorize_url(state)
     return {"url": url, "state": state}
@@ -43,7 +43,7 @@ async def ibkr_callback(
     ip: str = Depends(get_client_ip),
 ):
     user_id = user["sub"]
-    log_access(user_id, "ibkr_callback", "broker_connection", ip_address=ip)
+    log_access(user_id, "ibkr_callback", "account_connection", ip_address=ip)
 
     tokens = await exchange_code_for_tokens(body.code)
 
@@ -62,35 +62,35 @@ async def ibkr_callback(
     db = get_supabase()
 
     existing = (
-        db.table("broker_connections")
+        db.table("account_connections")
         .select("id")
         .eq("user_id", user_id)
-        .eq("broker", "ibkr")
+        .eq("provider", "ibkr")
         .execute()
     )
     if existing.data:
-        db.table("broker_connections").update({
+        db.table("account_connections").update({
             "encrypted_access_token": encrypt_token(access_token).decode("latin-1"),
             "encrypted_refresh_token": encrypt_token(refresh_token).decode("latin-1"),
             "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
-            "account_id": account_id,
+            "provider_item_id": account_id,
             "status": "active",
             "last_sync_at": None,
         }).eq("id", existing.data[0]["id"]).execute()
         connection_id = existing.data[0]["id"]
     else:
-        result = db.table("broker_connections").insert({
+        result = db.table("account_connections").insert({
             "user_id": user_id,
-            "broker": "ibkr",
+            "provider": "ibkr",
             "encrypted_access_token": encrypt_token(access_token).decode("latin-1"),
             "encrypted_refresh_token": encrypt_token(refresh_token).decode("latin-1"),
             "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
-            "account_id": account_id,
+            "provider_item_id": account_id,
             "status": "active",
         }).execute()
         connection_id = result.data[0]["id"]
 
-    return {"status": "connected", "broker": "ibkr", "account_id": account_id}
+    return {"status": "connected", "provider": "ibkr", "provider_item_id": account_id}
 
 
 @router.get("/status")
@@ -101,10 +101,10 @@ async def ibkr_status(
     db = get_supabase()
 
     result = (
-        db.table("broker_connections")
-        .select("id, broker, account_id, status, last_sync_at")
+        db.table("account_connections")
+        .select("id, provider, provider_item_id, status, last_sync_at")
         .eq("user_id", user_id)
-        .eq("broker", "ibkr")
+        .eq("provider", "ibkr")
         .execute()
     )
 
@@ -114,7 +114,7 @@ async def ibkr_status(
     conn = result.data[0]
     return {
         "connected": conn["status"] == "active",
-        "account_id": conn["account_id"],
+        "provider_item_id": conn["provider_item_id"],
         "status": conn["status"],
         "last_sync_at": conn["last_sync_at"],
     }
@@ -126,14 +126,14 @@ async def sync_trades(
     ip: str = Depends(get_client_ip),
 ):
     user_id = user["sub"]
-    log_access(user_id, "sync_trades", "broker_connection", ip_address=ip)
+    log_access(user_id, "sync_trades", "account_connection", ip_address=ip)
 
     db = get_supabase()
     conn = (
-        db.table("broker_connections")
+        db.table("account_connections")
         .select("*")
         .eq("user_id", user_id)
-        .eq("broker", "ibkr")
+        .eq("provider", "ibkr")
         .eq("status", "active")
         .execute()
     )
@@ -151,7 +151,7 @@ async def sync_trades(
             tokens = await refresh_access_token(refresh_tok)
             access_token = tokens["access_token"]
             new_refresh = tokens.get("refresh_token", refresh_tok)
-            db.table("broker_connections").update({
+            db.table("account_connections").update({
                 "encrypted_access_token": encrypt_token(access_token).decode("latin-1"),
                 "encrypted_refresh_token": encrypt_token(new_refresh).decode("latin-1"),
                 "token_expires_at": (
@@ -167,7 +167,7 @@ async def sync_trades(
     finally:
         await client.close()
 
-    db.table("broker_connections").update({
+    db.table("account_connections").update({
         "last_sync_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", connection["id"]).execute()
 
@@ -180,13 +180,13 @@ async def disconnect_ibkr(
     ip: str = Depends(get_client_ip),
 ):
     user_id = user["sub"]
-    log_access(user_id, "disconnect_ibkr", "broker_connection", ip_address=ip)
+    log_access(user_id, "disconnect_ibkr", "account_connection", ip_address=ip)
 
     db = get_supabase()
-    db.table("broker_connections").update({
+    db.table("account_connections").update({
         "status": "disconnected",
         "encrypted_access_token": None,
         "encrypted_refresh_token": None,
-    }).eq("user_id", user_id).eq("broker", "ibkr").execute()
+    }).eq("user_id", user_id).eq("provider", "ibkr").execute()
 
     return {"status": "disconnected"}

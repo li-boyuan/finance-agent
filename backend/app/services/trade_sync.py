@@ -7,7 +7,7 @@ from app.services.ibkr import IBKRClient
 async def sync_trades_from_ibkr(
     client: IBKRClient,
     user_id: str,
-    broker_connection_id: str,
+    connection_id: str,
     days: int = 7,
 ) -> dict:
     raw_trades = await client.get_trades(days=days)
@@ -41,7 +41,7 @@ async def sync_trades_from_ibkr(
         executed_at = raw.get("trade_time", datetime.now(timezone.utc).isoformat())
 
         trade = find_or_create_trade(
-            db, user_id, broker_connection_id, symbol, side, price, quantity, executed_at
+            db, user_id, connection_id, symbol, side, price, quantity, executed_at
         )
 
         db.table("trade_executions").insert({
@@ -63,7 +63,7 @@ async def sync_trades_from_ibkr(
 
 
 def find_or_create_trade(
-    db, user_id: str, broker_connection_id: str,
+    db, user_id: str, connection_id: str,
     symbol: str, side: str, price: float, quantity: float, executed_at: str,
 ) -> dict:
     trade_side = "long" if side == "buy" else "short"
@@ -85,7 +85,7 @@ def find_or_create_trade(
         db.table("trades")
         .insert({
             "user_id": user_id,
-            "broker_connection_id": broker_connection_id,
+            "connection_id": connection_id,
             "symbol": symbol,
             "side": trade_side,
             "status": "open",
