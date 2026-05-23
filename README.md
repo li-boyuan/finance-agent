@@ -1,6 +1,8 @@
-# TradeLog
+# Finance Agent
 
-A trade journal and analytics platform that integrates with Interactive Brokers. Auto-capture trades, track performance, and analyze your edge.
+AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming soon), and get plain-language guidance on budgeting, debt, investing, and major decisions.
+
+> Note: README below still describes the original trade-journal scope. Full rewrite pending — the product is pivoting to an AI finance advisor with chat (shipped), Plaid integration, and tax-aware analytics.
 
 ## Architecture
 
@@ -41,7 +43,7 @@ A trade journal and analytics platform that integrates with Interactive Brokers.
 ## Project Structure
 
 ```
-trader/
+finance-agent/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                 # FastAPI app, CORS, route registration
@@ -143,8 +145,8 @@ All tables have row-level security (RLS) — users can only access their own dat
 
 ```bash
 # Clone
-git clone https://github.com/li-boyuan/trader.git
-cd trader
+git clone https://github.com/li-boyuan/finance-agent.git
+cd finance-agent
 
 # Frontend
 cd frontend

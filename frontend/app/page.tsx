@@ -4,9 +4,9 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 p-8">
       <div className="text-center">
-        <h1 className="text-5xl font-bold tracking-tight">TradeLog</h1>
+        <h1 className="text-5xl font-bold tracking-tight">Finance Agent</h1>
         <p className="mt-4 text-lg text-gray-400">
-          Auto-capture trades from IBKR. Analyze your edge.
+          Your AI personal finance advisor. Ask anything about money.
         </p>
       </div>
       <div className="flex gap-4">

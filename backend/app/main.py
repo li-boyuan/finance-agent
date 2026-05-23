@@ -15,7 +15,7 @@ from app.api.routes import (
 )
 from app.config import settings
 
-app = FastAPI(title="Advisor API", version="0.2.0")
+app = FastAPI(title="Finance Agent API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: trader
-      POSTGRES_PASSWORD: trader_local
-      POSTGRES_DB: trader
+      POSTGRES_USER: finance_agent
+      POSTGRES_PASSWORD: finance_agent_local
+      POSTGRES_DB: finance_agent
     ports:
       - "5432:5432"
     volumes:

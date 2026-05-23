@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TradeLog",
-  description: "Trade journal and analytics for active traders",
+  title: "Finance Agent",
+  description: "AI personal finance advisor — plain-language guidance on budgeting, debt, investing, and major decisions.",
 };
 
 export default function RootLayout({
