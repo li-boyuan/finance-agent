@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     ibkr_redirect_uri: str = "http://localhost:3000/api/ibkr/callback"
     redis_url: str = "redis://localhost:6379"
     cors_origins: str = "http://localhost:3000"
+    anthropic_api_key: str = ""
 
     model_config = {"env_file": ".env"}
 
