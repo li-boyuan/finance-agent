@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { createClient } from "@/lib/supabase/client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -18,6 +20,35 @@ interface Conversation {
   updated_at: string;
 }
 
+const STARTER_PROMPTS = [
+  { title: "Should I prioritize", subtitle: "paying off debt or investing?" },
+  { title: "Build me a budget", subtitle: "for next month from my situation" },
+  { title: "Am I on track", subtitle: "for retirement?" },
+  { title: "Explain Roth vs Traditional", subtitle: "for my income bracket" },
+];
+
+function groupConversations(conversations: Conversation[]) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const sevenDaysAgo = new Date(today.getTime() - 7 * 86400000);
+
+  const groups: Record<string, Conversation[]> = {
+    Today: [],
+    Yesterday: [],
+    "Previous 7 days": [],
+    Older: [],
+  };
+  for (const c of conversations) {
+    const d = new Date(c.updated_at);
+    if (d >= today) groups.Today.push(c);
+    else if (d >= yesterday) groups.Yesterday.push(c);
+    else if (d >= sevenDaysAgo) groups["Previous 7 days"].push(c);
+    else groups.Older.push(c);
+  }
+  return groups;
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -31,6 +62,7 @@ export default function ChatPage() {
   const [financialContext, setFinancialContext] = useState("");
   const [showAbout, setShowAbout] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -92,6 +124,7 @@ export default function ChatPage() {
     setActiveConvId(null);
     setMessages([]);
     setStreamingContent("");
+    textareaRef.current?.focus();
   };
 
   const saveFinancialContext = async () => {
@@ -107,9 +140,10 @@ export default function ChatPage() {
     setShowAbout(false);
   };
 
-  const sendMessage = async () => {
-    if (!token || !input.trim() || sending) return;
-    const userMessage: Message = { role: "user", content: input };
+  const sendMessage = async (overrideText?: string) => {
+    const text = overrideText ?? input;
+    if (!token || !text.trim() || sending) return;
+    const userMessage: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setSending(true);
@@ -182,131 +216,243 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  const groups = groupConversations(conversations);
+  const showEmpty = messages.length === 0 && !streamingContent && !showAbout;
+
   return (
-    <div className="flex h-screen">
-      <div className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
+    <div className="flex h-screen bg-white text-gray-900">
+      <aside className="w-[260px] flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
+        <div className="p-3">
           <button
             onClick={newConversation}
-            className="w-full px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-gray-800 border border-gray-200 bg-white rounded-lg hover:bg-gray-100 transition"
           >
-            + New chat
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            New chat
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          {conversations.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => loadConversation(c.id)}
-              className={`w-full text-left px-4 py-3 text-sm hover:bg-gray-100 border-b border-gray-100 truncate ${
-                c.id === activeConvId ? "bg-gray-200" : ""
-              }`}
-            >
-              {c.title || "Untitled"}
-            </button>
-          ))}
+        <div className="flex-1 overflow-y-auto px-2">
+          {Object.entries(groups).map(([label, items]) =>
+            items.length > 0 ? (
+              <div key={label} className="mb-4">
+                <div className="px-3 py-1 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  {label}
+                </div>
+                {items.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => loadConversation(c.id)}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-lg truncate transition ${
+                      c.id === activeConvId
+                        ? "bg-gray-200 text-gray-900"
+                        : "text-gray-700 hover:bg-gray-100"
+                    }`}
+                  >
+                    {c.title || "Untitled"}
+                  </button>
+                ))}
+              </div>
+            ) : null,
+          )}
         </div>
-        <div className="border-t border-gray-200 p-3">
+        <div className="border-t border-gray-200 p-2">
           <button
             onClick={() => setShowAbout(!showAbout)}
-            className="w-full text-left text-sm text-gray-700 hover:text-gray-900"
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 rounded-lg hover:bg-gray-100 transition"
           >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21v-1a8 8 0 0 1 16 0v1" />
+            </svg>
             About you
           </button>
         </div>
-      </div>
+      </aside>
 
-      <div className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col min-w-0">
         {showAbout ? (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <h2 className="text-xl font-semibold mb-2">About your finances</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Tell the advisor about your income, debts, savings, goals, and
-              constraints. This stays private and helps every answer be
-              personalized.
-            </p>
-            <textarea
-              value={financialContext}
-              onChange={(e) => setFinancialContext(e.target.value)}
-              rows={16}
-              className="w-full p-3 border border-gray-300 rounded font-mono text-sm"
-              placeholder="e.g. I'm 32, make $120k/yr, have $30k in 401k (5% match), $15k student loans at 6%, $20k emergency fund. Want to buy a $500k house in 2 years."
-            />
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={saveFinancialContext}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Save
-              </button>
-              <button
-                onClick={() => setShowAbout(false)}
-                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
-              >
-                Cancel
-              </button>
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-3xl mx-auto p-8">
+              <h2 className="text-2xl font-semibold mb-2">About your finances</h2>
+              <p className="text-sm text-gray-600 mb-6">
+                Tell the advisor about your income, debts, savings, goals, and
+                constraints. This stays private and makes every answer
+                personalized.
+              </p>
+              <textarea
+                value={financialContext}
+                onChange={(e) => setFinancialContext(e.target.value)}
+                rows={14}
+                className="w-full p-4 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-400 resize-none"
+                placeholder="e.g. I'm 32, single, make $140k/yr in tech. $40k in 401k (5% match, fully captured), $20k Roth IRA, $25k emergency fund, $12k student loans at 6.5%, no credit card debt. Want to buy a $600k condo in 18 months."
+              />
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={saveFinancialContext}
+                  className="px-5 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setShowAbout(false)}
+                  className="px-5 py-2.5 border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {messages.length === 0 && !streamingContent && (
-                <div className="text-center text-gray-500 mt-20">
-                  <p className="text-lg mb-2">Ask anything about your money.</p>
-                  <p className="text-sm">
-                    Budgeting · Debt · Investing · Retirement · Major purchases
+            <div className="flex-1 overflow-y-auto">
+              {showEmpty ? (
+                <div className="h-full flex flex-col items-center justify-center px-4">
+                  <h1 className="text-3xl font-semibold mb-2 text-gray-900">
+                    How can I help with your money?
+                  </h1>
+                  <p className="text-sm text-gray-500 mb-12">
+                    Budgeting · Debt · Investing · Retirement · Major decisions
                   </p>
-                </div>
-              )}
-              {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`flex ${
-                    m.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`max-w-2xl px-4 py-3 rounded-lg whitespace-pre-wrap ${
-                      m.role === "user"
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-900"
-                    }`}
-                  >
-                    {m.content}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+                    {STARTER_PROMPTS.map((p, i) => (
+                      <button
+                        key={i}
+                        onClick={() => sendMessage(`${p.title} ${p.subtitle}`)}
+                        className="text-left p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition"
+                      >
+                        <div className="text-sm font-medium text-gray-900">
+                          {p.title}
+                        </div>
+                        <div className="text-sm text-gray-500 mt-0.5">
+                          {p.subtitle}
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
-              {streamingContent && (
-                <div className="flex justify-start">
-                  <div className="max-w-2xl px-4 py-3 rounded-lg bg-gray-100 text-gray-900 whitespace-pre-wrap">
-                    {streamingContent}
-                  </div>
+              ) : (
+                <div className="max-w-3xl mx-auto px-6 py-8 space-y-8">
+                  {messages.map((m, i) => (
+                    <MessageView key={i} role={m.role} content={m.content} />
+                  ))}
+                  {streamingContent && (
+                    <MessageView role="assistant" content={streamingContent} />
+                  )}
+                  <div ref={messagesEndRef} />
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
-            <div className="border-t border-gray-200 p-4">
-              <div className="flex gap-2 max-w-4xl mx-auto">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                  disabled={sending}
-                  placeholder="Ask your finance advisor..."
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={sending || !input.trim()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Send
-                </button>
+
+            <div className="border-t border-gray-200 bg-white">
+              <div className="max-w-3xl mx-auto p-4">
+                <div className="flex items-end gap-2 border border-gray-300 rounded-3xl px-4 py-3 focus-within:border-gray-400 focus-within:ring-1 focus-within:ring-gray-400">
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={sending}
+                    rows={1}
+                    placeholder="Ask anything about your money..."
+                    className="flex-1 resize-none bg-transparent text-gray-900 placeholder-gray-400 focus:outline-none max-h-40"
+                    style={{ minHeight: "24px" }}
+                  />
+                  <button
+                    onClick={() => sendMessage()}
+                    disabled={sending || !input.trim()}
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-gray-900 text-white rounded-full hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
+                    aria-label="Send"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 text-center mt-2">
+                  Finance Agent provides informational guidance, not professional financial, tax, or legal advice.
+                </p>
               </div>
             </div>
           </>
         )}
+      </main>
+    </div>
+  );
+}
+
+function MessageView({ role, content }: { role: "user" | "assistant"; content: string }) {
+  if (role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] bg-gray-100 text-gray-900 rounded-2xl px-4 py-3 whitespace-pre-wrap">
+          {content}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-3">
+      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-emerald-600 flex items-center justify-center text-white text-xs font-semibold">
+        FA
+      </div>
+      <div className="flex-1 text-gray-900 leading-relaxed">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+            ul: ({ children }) => <ul className="list-disc pl-6 mb-3 space-y-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal pl-6 mb-3 space-y-1">{children}</ol>,
+            li: ({ children }) => <li>{children}</li>,
+            strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+            code: ({ children }) => (
+              <code className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm font-mono">
+                {children}
+              </code>
+            ),
+            pre: ({ children }) => (
+              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-x-auto text-sm font-mono mb-3">
+                {children}
+              </pre>
+            ),
+            table: ({ children }) => (
+              <div className="overflow-x-auto my-3">
+                <table className="min-w-full text-sm border-collapse">{children}</table>
+              </div>
+            ),
+            th: ({ children }) => (
+              <th className="border border-gray-300 bg-gray-50 px-3 py-1.5 text-left font-semibold">
+                {children}
+              </th>
+            ),
+            td: ({ children }) => (
+              <td className="border border-gray-300 px-3 py-1.5">{children}</td>
+            ),
+            h1: ({ children }) => <h1 className="text-xl font-semibold mt-4 mb-2">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-lg font-semibold mt-4 mb-2">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-base font-semibold mt-3 mb-2">{children}</h3>,
+            blockquote: ({ children }) => (
+              <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-700 my-3">
+                {children}
+              </blockquote>
+            ),
+            a: ({ href, children }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer" className="text-emerald-700 underline">
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
       </div>
     </div>
   );
