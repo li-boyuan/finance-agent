@@ -7,8 +7,10 @@ from app.api.routes import (
     budgets,
     chat,
     goals,
+    holdings,
     ibkr,
     plaid,
+    portfolio,
     profile,
     trades,
     transactions,
@@ -31,6 +33,8 @@ app.include_router(accounts.router, prefix="/api/accounts", tags=["accounts"])
 app.include_router(transactions.router, prefix="/api/transactions", tags=["transactions"])
 app.include_router(budgets.router, prefix="/api/budgets", tags=["budgets"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
+app.include_router(holdings.router, prefix="/api/holdings", tags=["holdings"])
+app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(plaid.router, prefix="/api/plaid", tags=["plaid"])
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"])

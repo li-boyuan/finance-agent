@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **Phase 1 complete.** Public surface (marketing landing, sign-up / sign-in, streaming chat) is live with a cohesive light-themed UI. Chat advisor is grounded in user-provided context. v2 (Plaid + tool use over real account data) is the next milestone.
+> Status: **Phase 1 complete + portfolio dashboard live.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. Next milestones: Plaid integration for spending data, Claude tool use over portfolio + transactions.
 
 ## Architecture
 
@@ -11,6 +11,7 @@ AI personal finance advisor. Chat with Claude over your real financial situation
 │  Next.js 14 (Vercel)                │
 │  - Supabase Auth (email / password) │
 │  - Chat UI w/ streaming + markdown  │
+│  - Portfolio dashboard + holdings   │
 │  - About-you context panel          │
 └──────────────┬──────────────────────┘
                │ HTTPS
@@ -18,6 +19,8 @@ AI personal finance advisor. Chat with Claude over your real financial situation
 │  FastAPI (Railway)                  │
 │  - JWT validation (Supabase)        │
 │  - Chat SSE endpoint                │
+│  - Holdings CRUD + portfolio rollup │
+│  - Yahoo Finance quote cache (5min) │
 │  - Plaid / IBKR account sync        │
 │  - Audit logging                    │
 └──────┬────────────────────┬─────────┘
@@ -66,12 +69,16 @@ finance-agent/
 │   │   │       ├── budgets.py      # /api/budgets/
 │   │   │       ├── goals.py        # /api/goals/
 │   │   │       ├── chat.py         # /api/chat/  (SSE streaming)
-│   │   │       ├── plaid.py        # /api/plaid/  (v2 stubs)
+│   │   │       ├── holdings.py     # /api/holdings/  CRUD for stocks/options/assets
+│   │   │       ├── portfolio.py    # /api/portfolio/summary  (live quotes + rollup)
+│   │   │       ├── plaid.py        # /api/plaid/  (Phase 2 stubs)
 │   │   │       ├── ibkr.py         # /api/ibkr/  (OAuth + sync, legacy)
 │   │   │       └── trades.py       # /api/trades/  (legacy, kept)
 │   │   ├── models/                 # Pydantic models for each resource
 │   │   └── services/
 │   │       ├── chat.py             # Anthropic streaming client + system prompt
+│   │       ├── market_data.py      # Yahoo Finance quote fetcher (httpx, 5-min cache)
+│   │       ├── options.py          # OCC symbol build/parse + contract multiplier
 │   │       ├── ibkr.py             # IBKR API client + OAuth
 │   │       └── trade_sync.py       # Trade import + P&L calc
 │   ├── requirements.txt
@@ -82,8 +89,11 @@ finance-agent/
 │   │   ├── page.tsx                # Landing
 │   │   ├── login/page.tsx          # Sign in / sign up (Supabase)
 │   │   └── dashboard/
+│   │       ├── layout.tsx          # Shared dashboard shell (top nav + sign out)
 │   │       ├── page.tsx            # Redirects → /dashboard/chat
 │   │       ├── chat/page.tsx       # ChatGPT-style chat UI + sidebar
+│   │       ├── portfolio/page.tsx  # Stats cards + allocation donut + holdings table
+│   │       ├── holdings/page.tsx   # Add / edit / delete holdings (type-aware form)
 │   │       └── trades/page.tsx     # Legacy trade-journal dashboard
 │   ├── lib/
 │   │   ├── api.ts                  # Typed fetch helper
@@ -94,7 +104,8 @@ finance-agent/
 ├── supabase/migrations/
 │   ├── 001_initial_schema.sql      # profiles, broker_connections, trades, audit_log
 │   ├── 002_advisor_expansion.sql   # Rename → account_connections + 8 new tables
-│   └── 003_user_context.sql        # profiles.financial_context
+│   ├── 003_user_context.sql        # profiles.financial_context
+│   └── 004_asset_types.sql         # holdings.security_type adds real_estate / vehicle
 └── docker-compose.yml              # Local Postgres + Redis (dev only)
 ```
 
@@ -114,7 +125,16 @@ finance-agent/
 | GET | `/api/chat/conversations/{id}/messages` | Messages for one conversation |
 | POST | `/api/chat/messages` | Send message — SSE stream of `text` / `done` / `error` events |
 
-### Accounts, transactions, budgets, goals (read-only stubs until v2)
+### Portfolio (live)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/portfolio/summary` | Total value, today change, total return, allocation %, enriched per-holding rows with live quotes |
+| GET | `/api/holdings/` | List all holdings (raw, no quotes) |
+| POST | `/api/holdings/` | Add a holding. Polymorphic body: stocks/ETFs/crypto use `symbol`; options use `underlying`+`expiry`+`strike`+`option_type`; real estate / vehicle / other use `name`+`current_value` |
+| PUT | `/api/holdings/{id}` | Update quantity / cost basis / current value |
+| DELETE | `/api/holdings/{id}` | Remove a holding |
+
+### Accounts, transactions, budgets, goals (read-only stubs until Plaid lands)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/accounts/` | List active accounts |
@@ -159,7 +179,7 @@ finance-agent/
 | `account_connections` | OAuth / API tokens (encrypted) for ibkr / plaid / manual sources |
 | `accounts` | Provider-agnostic accounts: depository / credit / investment / retirement / loan |
 | `transactions` | Bank + investment transactions; positive = inflow |
-| `holdings` | Investment positions with cost basis + current value (historical snapshots) |
+| `holdings` | Investment + asset positions: stocks, ETFs, crypto, options (OCC symbols), real estate, vehicles. Cost basis + current value, historical snapshots by `as_of` date |
 | `budgets` | Per-category spending limits (weekly / monthly / yearly) |
 | `goals` | Savings / debt-payoff / purchase goals with target dates |
 | `net_worth_snapshots` | Daily aggregated assets / liabilities / net worth |
@@ -261,7 +281,8 @@ Open `http://localhost:3000`, sign up, you'll land on `/dashboard/chat`. Open th
 | Phase | Status | Scope |
 |-------|--------|-------|
 | **v1 — Chat advisor + public surface** | ✅ Shipped | SSE streaming chat, conversation persistence, free-form "About you" context, markdown rendering, ChatGPT-style UI, SaaS marketing landing, sign-up / sign-in flow — all sharing one light-themed visual language |
-| **v2 — Plaid + tool use** | ⏳ Next | Plaid Link for banks / brokerages, transaction & holding sync, Anthropic tool use over real account data |
+| **v2a — Portfolio dashboard** | ✅ Shipped | Holdings CRUD across stocks / ETFs / crypto / **options (OCC + ×100)** / real estate / vehicles / other; Yahoo Finance quote fetcher with 5-min cache; allocation donut, stats cards (Total Value / Today / Total Return / Positions), sortable per-holding table; type-aware add form |
+| **v2b — Plaid + tool use** | ⏳ Next | Plaid Link for banks (spending) and brokerages (auto-synced holdings); Anthropic tool use so the chat can reason about real positions and transactions |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |

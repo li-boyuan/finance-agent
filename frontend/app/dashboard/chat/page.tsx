@@ -227,7 +227,7 @@ export default function ChatPage() {
   const showEmpty = messages.length === 0 && !streamingContent && !showAbout;
 
   return (
-    <div className="flex h-screen bg-white text-gray-900">
+    <div className="flex h-full bg-white text-gray-900">
       <aside className="w-[260px] flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
         <div className="p-3">
           <button
