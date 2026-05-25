@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **v1 chat shipped.** Streaming AI advisor grounded in user-provided context. v2 (Plaid + tool use over real account data) is the next milestone.
+> Status: **Phase 1 complete.** Public surface (marketing landing, sign-up / sign-in, streaming chat) is live with a cohesive light-themed UI. Chat advisor is grounded in user-provided context. v2 (Plaid + tool use over real account data) is the next milestone.
 
 ## Architecture
 
@@ -260,7 +260,7 @@ Open `http://localhost:3000`, sign up, you'll land on `/dashboard/chat`. Open th
 
 | Phase | Status | Scope |
 |-------|--------|-------|
-| **v1 — Chat advisor** | ✅ Shipped | SSE streaming, conversation persistence, free-form "About you" context, markdown rendering |
+| **v1 — Chat advisor + public surface** | ✅ Shipped | SSE streaming chat, conversation persistence, free-form "About you" context, markdown rendering, ChatGPT-style UI, SaaS marketing landing, sign-up / sign-in flow — all sharing one light-themed visual language |
 | **v2 — Plaid + tool use** | ⏳ Next | Plaid Link for banks / brokerages, transaction & holding sync, Anthropic tool use over real account data |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
