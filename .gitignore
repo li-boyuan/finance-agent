@@ -15,9 +15,14 @@ venv/
 .env.local
 .env.production
 
+# Secrets (IBKR OAuth keys, etc.)
+backend/secrets/
+*.pem
+
 # Next.js
 frontend/.next/
 frontend/out/
+frontend/tsconfig.tsbuildinfo
 
 # IDE
 .vscode/

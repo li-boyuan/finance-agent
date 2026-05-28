@@ -6,13 +6,11 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_current_user
 from app.db import get_supabase
 from app.services.options import build_occ_symbol, format_option_name
+from app.services.portfolio import NON_MARKET_TYPES
 
 router = APIRouter()
 
 MANUAL_ACCOUNT_NAME = "Manual Portfolio"
-
-# Asset types whose value comes from the user, not a market feed.
-NON_MARKET_TYPES = {"real_estate", "vehicle", "other"}
 
 
 def get_or_create_manual_account(db, user_id: str) -> str:
