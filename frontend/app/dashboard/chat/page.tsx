@@ -14,6 +14,13 @@ interface Message {
   content: string;
 }
 
+interface ToolStatus {
+  id: string;
+  tool: string;
+  label: string;
+  status: "running" | "done";
+}
+
 interface Conversation {
   id: string;
   title: string | null;
@@ -59,6 +66,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [activeTools, setActiveTools] = useState<ToolStatus[]>([]);
   const [financialContext, setFinancialContext] = useState("");
   const [showAbout, setShowAbout] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -117,6 +125,7 @@ export default function ChatPage() {
       setActiveConvId(convId);
       setMessages(data.messages || []);
       setStreamingContent("");
+      setActiveTools([]);
     }
   };
 
@@ -124,6 +133,7 @@ export default function ChatPage() {
     setActiveConvId(null);
     setMessages([]);
     setStreamingContent("");
+    setActiveTools([]);
     textareaRef.current?.focus();
   };
 
@@ -148,6 +158,7 @@ export default function ChatPage() {
     setInput("");
     setSending(true);
     setStreamingContent("");
+    setActiveTools([]);
 
     try {
       const res = await fetch(`${API_URL}/api/chat/messages`, {
@@ -185,12 +196,22 @@ export default function ChatPage() {
           } else if (data.type === "text") {
             assistantContent += data.text;
             setStreamingContent(assistantContent);
+          } else if (data.type === "tool_use_start") {
+            setActiveTools((prev) => [
+              ...prev,
+              { id: data.id, tool: data.tool, label: data.label, status: "running" },
+            ]);
+          } else if (data.type === "tool_use_done") {
+            setActiveTools((prev) =>
+              prev.map((t) => (t.id === data.id ? { ...t, status: "done" } : t)),
+            );
           } else if (data.type === "done") {
             setMessages((prev) => [
               ...prev,
               { role: "assistant", content: assistantContent },
             ]);
             setStreamingContent("");
+            setActiveTools([]);
             fetchConversations();
           } else if (data.type === "error") {
             setMessages((prev) => [
@@ -198,6 +219,7 @@ export default function ChatPage() {
               { role: "assistant", content: `Error: ${data.message}` },
             ]);
             setStreamingContent("");
+            setActiveTools([]);
           }
         }
       }
@@ -207,6 +229,7 @@ export default function ChatPage() {
         { role: "assistant", content: `Error: ${(e as Error).message}` },
       ]);
       setStreamingContent("");
+      setActiveTools([]);
     } finally {
       setSending(false);
     }
@@ -214,7 +237,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, activeTools]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -344,8 +367,12 @@ export default function ChatPage() {
                   {messages.map((m, i) => (
                     <MessageView key={i} role={m.role} content={m.content} />
                   ))}
-                  {streamingContent && (
-                    <MessageView role="assistant" content={streamingContent} />
+                  {(streamingContent || activeTools.length > 0) && (
+                    <MessageView
+                      role="assistant"
+                      content={streamingContent}
+                      tools={activeTools}
+                    />
                   )}
                   <div ref={messagesEndRef} />
                 </div>
@@ -389,7 +416,15 @@ export default function ChatPage() {
   );
 }
 
-function MessageView({ role, content }: { role: "user" | "assistant"; content: string }) {
+function MessageView({
+  role,
+  content,
+  tools,
+}: {
+  role: "user" | "assistant";
+  content: string;
+  tools?: ToolStatus[];
+}) {
   if (role === "user") {
     return (
       <div className="flex justify-end">
@@ -405,6 +440,42 @@ function MessageView({ role, content }: { role: "user" | "assistant"; content: s
         FA
       </div>
       <div className="flex-1 text-gray-900 leading-relaxed">
+        {tools && tools.length > 0 && (
+          <div className="mb-3 flex flex-col gap-1.5">
+            {tools.map((t) => (
+              <div
+                key={t.id}
+                className="inline-flex items-center gap-2 self-start text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-full px-3 py-1.5"
+              >
+                {t.status === "running" ? (
+                  <svg
+                    className="animate-spin"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                )}
+                <span>{t.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{

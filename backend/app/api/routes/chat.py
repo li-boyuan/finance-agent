@@ -113,8 +113,10 @@ async def send_message(
         full_text = ""
         usage_info: dict = {}
         try:
-            async for evt in stream_chat(prior.data, body.content, financial_context):
+            async for evt in stream_chat(user_id, prior.data, body.content, financial_context):
                 if evt["type"] == "text":
+                    yield f"data: {json.dumps(evt)}\n\n".encode()
+                elif evt["type"] in ("tool_use_start", "tool_use_done"):
                     yield f"data: {json.dumps(evt)}\n\n".encode()
                 elif evt["type"] == "done":
                     full_text = evt["content"]
@@ -125,11 +127,13 @@ async def send_message(
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n".encode()
             return
 
+        tool_calls = usage_info.get("tool_calls") or None
         db.table("chat_messages").insert({
             "conversation_id": conv_id,
             "user_id": user_id,
             "role": "assistant",
             "content": full_text,
+            "tool_calls": tool_calls,
             "model": usage_info.get("model"),
             "input_tokens": usage_info.get("input_tokens"),
             "output_tokens": usage_info.get("output_tokens"),

@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **Phase 1 complete + portfolio dashboard live.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. Next milestones: Plaid integration for spending data, Claude tool use over portfolio + transactions.
+> Status: **Phase 1 complete + portfolio dashboard live + chat tool use shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. Claude can now read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. Next milestone: Plaid integration for spending + brokerage sync.
 
 ## Architecture
 
@@ -76,7 +76,9 @@ finance-agent/
 │   │   │       └── trades.py       # /api/trades/  (legacy, kept)
 │   │   ├── models/                 # Pydantic models for each resource
 │   │   └── services/
-│   │       ├── chat.py             # Anthropic streaming client + system prompt
+│   │       ├── chat.py             # Anthropic streaming client + tool-use loop + system prompt
+│   │       ├── chat_tools.py       # Tool definitions (portfolio summary, list holdings) + executor
+│   │       ├── portfolio.py        # Portfolio rollup (live quotes + per-position enrichment, LLM views)
 │   │       ├── market_data.py      # Yahoo Finance quote fetcher (httpx, 5-min cache)
 │   │       ├── options.py          # OCC symbol build/parse + contract multiplier
 │   │       ├── ibkr.py             # IBKR API client + OAuth
@@ -282,7 +284,8 @@ Open `http://localhost:3000`, sign up, you'll land on `/dashboard/chat`. Open th
 |-------|--------|-------|
 | **v1 — Chat advisor + public surface** | ✅ Shipped | SSE streaming chat, conversation persistence, free-form "About you" context, markdown rendering, ChatGPT-style UI, SaaS marketing landing, sign-up / sign-in flow — all sharing one light-themed visual language |
 | **v2a — Portfolio dashboard** | ✅ Shipped | Holdings CRUD across stocks / ETFs / crypto / **options (OCC + ×100)** / real estate / vehicles / other; Yahoo Finance quote fetcher with 5-min cache; allocation donut, stats cards (Total Value / Today / Total Return / Positions), sortable per-holding table; type-aware add form |
-| **v2b — Plaid + tool use** | ⏳ Next | Plaid Link for banks (spending) and brokerages (auto-synced holdings); Anthropic tool use so the chat can reason about real positions and transactions |
+| **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
+| **v2c — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (auto-synced holdings); transaction-aware tool use |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
