@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { IBKRConnect } from "./IBKRConnect";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -169,8 +170,10 @@ export default function HoldingsPage() {
           Add stocks, crypto, real estate, vehicles, or anything else you want in your net worth.
         </p>
 
+        <IBKRConnect token={token} onSyncComplete={fetchHoldings} />
+
         <div className="border border-gray-200 rounded-2xl p-6 mb-8">
-          <h2 className="text-lg font-semibold mb-4">Add a holding</h2>
+          <h2 className="text-lg font-semibold mb-4">Add a holding manually</h2>
           <form onSubmit={handleAdd} className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Type</label>
@@ -180,7 +183,7 @@ export default function HoldingsPage() {
                   setSecurityType(e.target.value);
                   // Reset to sensible defaults when switching type kind
                   const newType = ASSET_TYPES.find((t) => t.value === e.target.value);
-                  if (newType && !newType.market) setQuantity("1");
+                  if (newType && newType.kind !== "market") setQuantity("1");
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:border-gray-400 focus:ring-1 focus:ring-gray-400"
               >
