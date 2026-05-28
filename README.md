@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **Phase 1 complete + portfolio dashboard live + chat tool use shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. Claude can now read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. Next milestone: Plaid integration for spending + brokerage sync.
+> Status: **Phase 1 complete + portfolio dashboard live + chat tool use + IBKR live sync shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. Claude can read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. IBKR positions sync via the self-hosted Client Portal Gateway. Next milestone: Plaid for banks + Fidelity.
 
 ## Architecture
 
@@ -72,8 +72,8 @@ finance-agent/
 │   │   │       ├── holdings.py     # /api/holdings/  CRUD for stocks/options/assets
 │   │   │       ├── portfolio.py    # /api/portfolio/summary  (live quotes + rollup)
 │   │   │       ├── plaid.py        # /api/plaid/  (Phase 2 stubs)
-│   │   │       ├── ibkr.py         # /api/ibkr/  (OAuth + sync, legacy)
-│   │   │       └── trades.py       # /api/trades/  (legacy, kept)
+│   │   │       ├── ibkr.py         # /api/ibkr/  (Client Portal Gateway connect + positions sync)
+│   │   │       └── trades.py       # /api/trades/  (legacy manual CRUD, kept)
 │   │   ├── models/                 # Pydantic models for each resource
 │   │   └── services/
 │   │       ├── chat.py             # Anthropic streaming client + tool-use loop + system prompt
@@ -81,8 +81,8 @@ finance-agent/
 │   │       ├── portfolio.py        # Portfolio rollup (live quotes + per-position enrichment, LLM views)
 │   │       ├── market_data.py      # Yahoo Finance quote fetcher (httpx, 5-min cache)
 │   │       ├── options.py          # OCC symbol build/parse + contract multiplier
-│   │       ├── ibkr.py             # IBKR API client + OAuth
-│   │       └── trade_sync.py       # Trade import + P&L calc
+│   │       ├── ibkr.py             # Client Portal API client + auth-strategy factory (gateway today, OAuth 1.0a future)
+│   │       └── ibkr_positions.py   # Map IBKR positions → holdings rows (full-replace sync)
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
@@ -153,14 +153,13 @@ finance-agent/
 | POST | `/api/plaid/sync` |
 | DELETE | `/api/plaid/disconnect/{connection_id}` |
 
-### IBKR (legacy, still functional)
-| Method | Path |
-|--------|------|
-| GET | `/api/ibkr/auth-url` |
-| POST | `/api/ibkr/callback` |
-| GET | `/api/ibkr/status` |
-| POST | `/api/ibkr/sync` |
-| DELETE | `/api/ibkr/disconnect` |
+### IBKR (Client Portal Gateway, positions sync)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/ibkr/connect` | Body `{base_url, verify_ssl?}` — probe a running gateway and store the connection |
+| GET | `/api/ibkr/status` | Connection status + last sync time |
+| POST | `/api/ibkr/sync` | Pull live positions and replace IBKR holdings (full snapshot) |
+| DELETE | `/api/ibkr/disconnect` | Disconnect (holdings retained until you delete the IBKR account row) |
 
 ### Trades (legacy, still functional)
 | Method | Path |
@@ -236,6 +235,8 @@ pip install -r requirements.txt
 #   1. supabase/migrations/001_initial_schema.sql
 #   2. supabase/migrations/002_advisor_expansion.sql
 #   3. supabase/migrations/003_user_context.sql
+#   4. supabase/migrations/004_asset_types.sql
+#   5. supabase/migrations/005_account_auth_config.sql
 
 # Generate Fernet key for encrypting broker tokens
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -255,6 +256,17 @@ npm run dev
 ```
 
 Open `http://localhost:3000`, sign up, you'll land on `/dashboard/chat`. Open the "About you" panel in the sidebar to give the advisor context, then ask anything.
+
+### Connecting IBKR (optional)
+
+To sync live positions from Interactive Brokers, run their **Client Portal Gateway** locally:
+
+1. Download from [interactivebrokers.com/en/trading/ib-api.php](https://www.interactivebrokers.com/en/trading/ib-api.php) — "Client Portal API" → "Gateway".
+2. Run `bin/run.sh root/conf.yaml` (requires Java 17+). Default port: `5000`.
+3. Open `https://localhost:5000` in a browser, accept the self-signed cert, log in with your IBKR credentials.
+4. In the Finance Agent dashboard, `POST /api/ibkr/connect` with `{"base_url": "https://localhost:5000"}`, then trigger `/api/ibkr/sync`. Your positions land in the portfolio dashboard.
+
+The gateway session lasts ~24 hours. After it expires, log in via the browser again and re-sync.
 
 ### Environment Variables
 
@@ -285,7 +297,8 @@ Open `http://localhost:3000`, sign up, you'll land on `/dashboard/chat`. Open th
 | **v1 — Chat advisor + public surface** | ✅ Shipped | SSE streaming chat, conversation persistence, free-form "About you" context, markdown rendering, ChatGPT-style UI, SaaS marketing landing, sign-up / sign-in flow — all sharing one light-themed visual language |
 | **v2a — Portfolio dashboard** | ✅ Shipped | Holdings CRUD across stocks / ETFs / crypto / **options (OCC + ×100)** / real estate / vehicles / other; Yahoo Finance quote fetcher with 5-min cache; allocation donut, stats cards (Total Value / Today / Total Return / Positions), sortable per-holding table; type-aware add form |
 | **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
-| **v2c — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (auto-synced holdings); transaction-aware tool use |
+| **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
+| **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
