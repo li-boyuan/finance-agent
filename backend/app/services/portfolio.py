@@ -93,9 +93,14 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
         value = price * qty * multiplier
         prev_value = prev_close * qty * multiplier
         gain = value - cost_total
-        gain_pct = (gain / cost_total * 100) if cost_total else 0.0
         day_change = value - prev_value
-        day_change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
+        # Percentages reflect *position* direction, not security direction.
+        # For shorts (qty < 0): a stock rising hurts the position, so the
+        # percentage goes negative. Use abs() in the denominators to keep
+        # the sign coming from the numerator only.
+        gain_pct = (gain / abs(cost_total) * 100) if cost_total else 0.0
+        day_change_pct = (day_change / abs(prev_value) * 100) if prev_value else 0.0
+        is_short = qty < 0
 
         enriched.append({
             "id": r["id"],
@@ -104,6 +109,7 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
             "security_type": sec_type,
             "is_market": is_market,
             "is_option": is_option,
+            "is_short": is_short,
             "option_meta": option_meta,
             "quantity": qty,
             "cost_basis": cost_basis,
@@ -166,12 +172,15 @@ def summarize_for_llm(summary: dict, top_n: int = 10) -> dict:
         reverse=True,
     )
 
-    top = sorted(holdings, key=lambda h: h["value"], reverse=True)[:top_n]
+    # Sort by exposure (abs value) so big short positions don't drop off the list.
+    top = sorted(holdings, key=lambda h: abs(h["value"]), reverse=True)[:top_n]
     top_holdings = [
         {
             "symbol": h["symbol"],
             "name": h["name"],
             "security_type": h["security_type"],
+            "is_short": h.get("is_short", False),
+            "quantity": h["quantity"],
             "value": h["value"],
             "allocation_pct": h["allocation_pct"],
             "total_return": h["total_return"],

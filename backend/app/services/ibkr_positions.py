@@ -228,7 +228,10 @@ def map_position_to_holding(raw: dict, user_id: str, account_id: str) -> dict | 
         "symbol": symbol,
         "name": display_name,
         "security_type": sec_type,
-        "quantity": abs(qty),
+        # Preserve sign: shorts are negative. Portfolio math (value, cost,
+        # return) propagates the sign naturally — a short option's value is
+        # the liability, cost is the credit received.
+        "quantity": qty,
         "cost_basis": round(avg_cost, 6),
         "currency": (raw.get("currency") or "USD").upper(),
         "as_of": date.today().isoformat(),
