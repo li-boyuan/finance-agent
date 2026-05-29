@@ -100,12 +100,23 @@ def _normalize_expiry(raw_value: str) -> str | None:
     return None
 
 
-# Fallback: parse "AAPL JAN 26 '24 200 Call" / "AAPL  240126C00200000" / OCC
+# IBKR's contractDesc embeds a fully-qualified OCC symbol in brackets:
+#   "MSTR   JUN2027 500 C [MSTR  270617C00500000 100]"
+# The bracketed form is space-padded but otherwise standard OCC plus a
+# trailing contract multiplier. We parse this first since it carries the
+# exact expiry date (vs. the human-readable prefix which only has month/year).
+IBKR_BRACKET_OCC_RE = re.compile(
+    r"\[\s*([A-Z0-9]{1,6})\s+(\d{6})([CP])(\d{8})\s+\d+\s*\]"
+)
+
+# Compact OCC form, e.g. "AAPL240126C00200000"
+OCC_LIKE_RE = re.compile(r"^([A-Z0-9]{1,6})\s*(\d{6})([CP])(\d{8})$")
+
+# Human-readable fallback, e.g. "AAPL JAN 26 '24 200 Call"
 CONTRACT_DESC_OPT_RE = re.compile(
     r"^([A-Z]{1,6})\s+([A-Za-z]{3})\s+(\d{1,2})\s+'?(\d{2,4})\s+([\d.]+)\s+(C|P|Call|Put)",
     re.IGNORECASE,
 )
-OCC_LIKE_RE = re.compile(r"^([A-Z]{1,6})\s*(\d{6})([CP])(\d{8})$")
 
 
 def _try_parse_option_from_desc(desc: str) -> tuple[str | None, str | None, float | None, str | None]:
@@ -113,10 +124,30 @@ def _try_parse_option_from_desc(desc: str) -> tuple[str | None, str | None, floa
     if not desc:
         return None, None, None, None
     desc = desc.strip()
+
+    # Preferred: IBKR's bracketed OCC — most precise, always has the day.
+    m = IBKR_BRACKET_OCC_RE.search(desc)
+    if m:
+        u, yymmdd, cp, strike_raw = m.groups()
+        return (
+            u.upper(),
+            f"20{yymmdd[:2]}-{yymmdd[2:4]}-{yymmdd[4:6]}",
+            int(strike_raw) / 1000.0,
+            cp.upper(),
+        )
+
+    # Standalone compact OCC.
     m = OCC_LIKE_RE.match(desc.replace(" ", ""))
     if m:
         u, yymmdd, cp, strike_raw = m.groups()
-        return u.upper(), f"20{yymmdd[:2]}-{yymmdd[2:4]}-{yymmdd[4:6]}", int(strike_raw) / 1000.0, cp.upper()
+        return (
+            u.upper(),
+            f"20{yymmdd[:2]}-{yymmdd[2:4]}-{yymmdd[4:6]}",
+            int(strike_raw) / 1000.0,
+            cp.upper(),
+        )
+
+    # Human-readable fallback.
     m = CONTRACT_DESC_OPT_RE.match(desc)
     if m:
         u, mon, day, yr, strike, cp = m.groups()
