@@ -14,6 +14,8 @@ interface IBKRStatus {
 interface SyncResult {
   synced: number;
   skipped: number;
+  options_seen?: number;
+  skipped_samples?: Record<string, unknown>[];
 }
 
 function formatLastSync(iso: string | null | undefined): string {
@@ -163,8 +165,21 @@ export function IBKRConnect({
           </div>
           {lastResult && (
             <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
-              Synced <span className="font-semibold text-gray-900">{lastResult.synced}</span> positions
-              {lastResult.skipped > 0 ? `, skipped ${lastResult.skipped} (unsupported types)` : ""}.
+              <div>
+                Synced <span className="font-semibold text-gray-900">{lastResult.synced}</span> positions
+                {lastResult.options_seen ? `, ${lastResult.options_seen} options seen` : ""}
+                {lastResult.skipped > 0 ? `, skipped ${lastResult.skipped}` : ""}.
+              </div>
+              {lastResult.skipped_samples && lastResult.skipped_samples.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                    Inspect skipped rows ({lastResult.skipped_samples.length} sample{lastResult.skipped_samples.length > 1 ? "s" : ""})
+                  </summary>
+                  <pre className="mt-2 p-2 bg-white border border-gray-200 rounded text-[10px] overflow-x-auto leading-tight">
+                    {JSON.stringify(lastResult.skipped_samples, null, 2)}
+                  </pre>
+                </details>
+              )}
             </div>
           )}
           <div className="flex gap-2">
