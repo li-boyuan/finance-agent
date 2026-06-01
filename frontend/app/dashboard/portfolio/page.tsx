@@ -200,6 +200,8 @@ export default function PortfolioPage() {
               />
             </div>
 
+            <NetWorthChart token={token} />
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
               <div className="lg:col-span-1 border border-gray-200 rounded-2xl p-6">
                 <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
@@ -242,6 +244,103 @@ export default function PortfolioPage() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function fmtShortDate(iso: string) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function NetWorthChart({ token }: { token: string }) {
+  const [history, setHistory] = useState<{ date: string; net_worth: number }[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    fetch(`${API_URL}/api/portfolio/history?days=365`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : { history: [] }))
+      .then((d) => { if (active) setHistory(d.history || []); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, [token]);
+
+  if (!loaded) return null;
+
+  if (history.length === 0) {
+    return (
+      <div className="border border-gray-200 rounded-2xl p-6 mb-8">
+        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-1">Net worth trend</h3>
+        <p className="text-sm text-gray-500">
+          Building — a snapshot is recorded each time you open this page. The trend line appears once a few days accumulate.
+        </p>
+      </div>
+    );
+  }
+
+  const vals = history.map((h) => h.net_worth);
+  const n = history.length;
+  const current = vals[n - 1];
+  const first = vals[0];
+  const change = current - first;
+  const changePct = first ? (change / Math.abs(first)) * 100 : 0;
+  const up = change >= 0;
+
+  const W = 800;
+  const H = 160;
+  const padY = 12;
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const x = (i: number) => (n > 1 ? (i / (n - 1)) * W : W / 2);
+  const yOf = (v: number) => H - padY - ((v - min) / span) * (H - 2 * padY);
+  const pts = history.map((h, i) => `${x(i)},${yOf(h.net_worth)}`);
+  const stroke = up ? "#10b981" : "#ef4444";
+  const fill = up ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
+  const areaPath = `M ${x(0)},${H} L ${pts.join(" L ")} L ${x(n - 1)},${H} Z`;
+
+  return (
+    <div className="border border-gray-200 rounded-2xl p-6 mb-8">
+      <div className="flex items-baseline justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">Net worth</h3>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{fmtCurrency(current)}</div>
+        </div>
+        {n > 1 && (
+          <div className={`text-sm tabular-nums ${colorClass(change)}`}>
+            {change >= 0 ? "+" : ""}{fmtCurrency(change)} ({fmtPct(changePct)})
+            <span className="text-gray-400"> · since {fmtShortDate(history[0].date)}</span>
+          </div>
+        )}
+      </div>
+      {n >= 2 ? (
+        <>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="160" preserveAspectRatio="none">
+            <path d={areaPath} fill={fill} stroke="none" />
+            <polyline
+              points={pts.join(" ")}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="flex justify-between text-xs text-gray-400 mt-2">
+            <span>{fmtShortDate(history[0].date)}</span>
+            <span>{fmtShortDate(history[n - 1].date)}</span>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-gray-500">
+          First snapshot recorded today — the trend line builds as more days accumulate.
+        </p>
+      )}
     </div>
   );
 }
