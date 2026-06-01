@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     cors_origins: str = "http://localhost:3000"
     anthropic_api_key: str = ""
+    plaid_client_id: str = ""
+    plaid_secret: str = ""
+    plaid_env: str = "sandbox"  # sandbox | development | production
 
     model_config = {"env_file": ".env"}
 
