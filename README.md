@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **Phase 1 complete + portfolio dashboard live + chat tool use + IBKR live sync shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support, long + short) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. The portfolio dashboard rolls holdings up by underlying ticker into collapsible summaries you expand to the individual legs — adjusted options (e.g. `GME1` → `GME`) and related instruments (e.g. a 2× leveraged ETF aliased to its underlying) group under the base ticker; shorts are marked and contribute correctly to P&L math. Claude can read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. IBKR positions sync via the self-hosted Client Portal Gateway. Next milestone: Plaid for banks + Fidelity.
+> Status: **Phase 1 complete + portfolio dashboard live + chat tool use + IBKR live sync + options analytics shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support, long + short) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. The portfolio dashboard rolls holdings up by underlying ticker into collapsible summaries you expand to the individual legs — adjusted options (e.g. `GME1` → `GME`) and related instruments (e.g. a 2× leveraged ETF aliased to its underlying) group under the base ticker; shorts are marked and contribute correctly to P&L math. Claude can read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. IBKR positions sync via the self-hosted Client Portal Gateway, and an Options page surfaces delta-adjusted exposure (from IBKR model greeks), an expiration calendar, and assignment-risk flags. Next milestone: Plaid for banks + Fidelity.
 
 ## Architecture
 
@@ -71,6 +71,7 @@ finance-agent/
 │   │   │       ├── chat.py         # /api/chat/  (SSE streaming)
 │   │   │       ├── holdings.py     # /api/holdings/  CRUD for stocks/options/assets
 │   │   │       ├── portfolio.py    # /api/portfolio/summary  (live quotes + rollup)
+│   │   │       ├── options.py      # /api/options/analytics  (delta-adjusted exposure, expirations)
 │   │   │       ├── plaid.py        # /api/plaid/  (Phase 2 stubs)
 │   │   │       ├── ibkr.py         # /api/ibkr/  (Client Portal Gateway connect + positions sync)
 │   │   │       └── trades.py       # /api/trades/  (legacy manual CRUD, kept)
@@ -81,6 +82,7 @@ finance-agent/
 │   │       ├── portfolio.py        # Portfolio rollup (live quotes + per-position enrichment, LLM views)
 │   │       ├── market_data.py      # Yahoo Finance quote fetcher (httpx, 5-min cache)
 │   │       ├── options.py          # OCC symbol build/parse + contract multiplier
+│   │       ├── options_analytics.py # Delta-adjusted exposure, expiration calendar, risk flags
 │   │       ├── ibkr.py             # Client Portal API client + auth-strategy factory (gateway today, OAuth 1.0a future)
 │   │       └── ibkr_positions.py   # Map IBKR positions → holdings rows (full-replace sync)
 │   ├── requirements.txt
@@ -95,6 +97,7 @@ finance-agent/
 │   │       ├── page.tsx            # Redirects → /dashboard/chat
 │   │       ├── chat/page.tsx       # ChatGPT-style chat UI + sidebar
 │   │       ├── portfolio/page.tsx  # Stats cards + allocation donut + grouped holdings table
+│   │       ├── options/page.tsx    # Delta-adjusted exposure, expiration calendar, risk flags
 │   │       ├── holdings/page.tsx   # Add form + IBKR panel + grouped holdings table w/ delete
 │   │       └── trades/page.tsx     # Legacy trade-journal dashboard
 │   ├── components/
@@ -109,7 +112,9 @@ finance-agent/
 │   ├── 001_initial_schema.sql      # profiles, broker_connections, trades, audit_log
 │   ├── 002_advisor_expansion.sql   # Rename → account_connections + 8 new tables
 │   ├── 003_user_context.sql        # profiles.financial_context
-│   └── 004_asset_types.sql         # holdings.security_type adds real_estate / vehicle
+│   ├── 004_asset_types.sql         # holdings.security_type adds real_estate / vehicle
+│   ├── 005_account_auth_config.sql # account_connections.auth_config (jsonb)
+│   └── 006_holdings_greeks.sql     # holdings.greeks (jsonb) — option delta/gamma/theta/vega
 └── docker-compose.yml              # Local Postgres + Redis (dev only)
 ```
 
@@ -137,6 +142,11 @@ finance-agent/
 | POST | `/api/holdings/` | Add a holding. Polymorphic body: stocks/ETFs/crypto use `symbol`; options use `underlying`+`expiry`+`strike`+`option_type`; real estate / vehicle / other use `name`+`current_value`. Quantity may be negative for short positions |
 | PUT | `/api/holdings/{id}` | Update quantity / cost basis / current value |
 | DELETE | `/api/holdings/{id}` | Remove a holding |
+
+### Options analytics
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/options/analytics` | Per-underlying delta-adjusted exposure (from IBKR greeks), expiration calendar, moneyness, and assignment-risk / near-expiry flags |
 
 ### Accounts, transactions, budgets, goals (read-only stubs until Plaid lands)
 | Method | Path | Description |
@@ -182,7 +192,7 @@ finance-agent/
 | `account_connections` | OAuth / API tokens (encrypted) for ibkr / plaid / manual sources |
 | `accounts` | Provider-agnostic accounts: depository / credit / investment / retirement / loan |
 | `transactions` | Bank + investment transactions; positive = inflow |
-| `holdings` | Investment + asset positions: stocks, ETFs, crypto, options (OCC symbols), real estate, vehicles. Cost basis + current value, historical snapshots by `as_of` date |
+| `holdings` | Investment + asset positions: stocks, ETFs, crypto, options (OCC symbols), real estate, vehicles. Cost basis + current value, historical snapshots by `as_of` date; `greeks` jsonb (option delta/gamma/theta/vega captured at IBKR sync) |
 | `budgets` | Per-category spending limits (weekly / monthly / yearly) |
 | `goals` | Savings / debt-payoff / purchase goals with target dates |
 | `net_worth_snapshots` | Daily aggregated assets / liabilities / net worth |
@@ -239,6 +249,7 @@ pip install -r requirements.txt
 #   3. supabase/migrations/003_user_context.sql
 #   4. supabase/migrations/004_asset_types.sql
 #   5. supabase/migrations/005_account_auth_config.sql
+#   6. supabase/migrations/006_holdings_greeks.sql
 
 # Generate Fernet key for encrypting broker tokens
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -301,6 +312,7 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
 | **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Parses options from `contractDesc` (IBKR doesn't populate structured strike/expiry fields on the gateway), preserves long/short sign so P&L math is correct on credit spreads and naked shorts, and groups stock + related options by underlying ticker on the dashboard (including corporate-action-adjusted roots like `GME1` → `GME`). Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
 | **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
+| **v2e — Options analytics** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure from IBKR model greeks (captured at sync into `holdings.greeks`), expiration calendar with DTE, moneyness + intrinsic/extrinsic, and assignment-risk / near-expiry flags |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
