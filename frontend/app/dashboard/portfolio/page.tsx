@@ -153,7 +153,7 @@ export default function PortfolioPage() {
             <h1 className="text-2xl font-semibold">Portfolio</h1>
             <p className="text-sm text-gray-500 mt-1">
               {summary.positions_count} position{summary.positions_count === 1 ? "" : "s"} ·
-              Prices via Yahoo Finance, cached 5 min
+              synced from IBKR · live prices via Yahoo (5-min cache)
             </p>
           </div>
           <button
