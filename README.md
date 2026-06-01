@@ -2,7 +2,7 @@
 
 AI personal finance advisor. Chat with Claude over your real financial situation, link bank and investment accounts (coming), and get plain-language guidance on budgeting, debt, investing, and major money decisions.
 
-> Status: **Phase 1 complete + portfolio dashboard live + chat tool use + IBKR live sync + options analytics shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support, long + short) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. The portfolio dashboard rolls holdings up by underlying ticker into collapsible summaries you expand to the individual legs — adjusted options (e.g. `GME1` → `GME`) and related instruments (e.g. a 2× leveraged ETF aliased to its underlying) group under the base ticker; shorts are marked and contribute correctly to P&L math. Claude can read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. IBKR positions sync via the self-hosted Client Portal Gateway, and an Options page surfaces delta-adjusted exposure (from IBKR model greeks), an expiration calendar, and assignment-risk flags. Next milestone: Plaid for banks + Fidelity.
+> Status: **Phase 1 complete + portfolio dashboard live + chat tool use + IBKR live sync + options analytics shipped.** Public surface (landing, sign-up / sign-in, streaming chat) ships with a cohesive light-themed UI. Portfolio dashboard tracks stocks / ETFs / crypto / **options** (full OCC support, long + short) / real estate / vehicles / other assets — live quotes via Yahoo Finance, manual valuation for non-market assets. The portfolio dashboard rolls holdings up by underlying ticker into collapsible summaries you expand to the individual legs — adjusted options (e.g. `GME1` → `GME`) and related instruments (e.g. a 2× leveraged ETF aliased to its underlying) group under the base ticker; shorts are marked and contribute correctly to P&L math. Claude can read your portfolio in chat (`get_portfolio_summary`, `list_holdings`) with live tool-call indicators. IBKR positions sync via the self-hosted Client Portal Gateway, and an Options page surfaces delta-adjusted exposure (from IBKR model greeks), an expiration calendar, and assignment-risk flags. Fidelity accounts (IRA / Roth / 529 / brokerage) import via Plaid. Next milestone: bank/spending sync + tax-aware analytics.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ finance-agent/
 │   │   │       ├── holdings.py     # /api/holdings/  CRUD for stocks/options/assets
 │   │   │       ├── portfolio.py    # /api/portfolio/summary  (live quotes + rollup)
 │   │   │       ├── options.py      # /api/options/analytics  (delta-adjusted exposure, expirations)
-│   │   │       ├── plaid.py        # /api/plaid/  (Phase 2 stubs)
+│   │   │       ├── plaid.py        # /api/plaid/  (Fidelity & banks: Link, exchange, holdings sync)
 │   │   │       ├── ibkr.py         # /api/ibkr/  (Client Portal Gateway connect + positions sync)
 │   │   │       └── trades.py       # /api/trades/  (legacy manual CRUD, kept)
 │   │   ├── models/                 # Pydantic models for each resource
@@ -160,13 +160,14 @@ finance-agent/
 | GET | `/api/budgets/` | Active budgets |
 | GET | `/api/goals/` | Active goals |
 
-### Plaid (v2 — currently returns 501)
-| Method | Path |
-|--------|------|
-| POST | `/api/plaid/link-token` |
-| POST | `/api/plaid/exchange` |
-| POST | `/api/plaid/sync` |
-| DELETE | `/api/plaid/disconnect/{connection_id}` |
+### Plaid (Fidelity & banks)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/plaid/link-token` | Create a Plaid Link token (needs `PLAID_CLIENT_ID`/`PLAID_SECRET`) |
+| POST | `/api/plaid/exchange` | Exchange Link's `public_token`, store the connection (token Fernet-encrypted), and sync holdings |
+| POST | `/api/plaid/sync` | Re-pull investments holdings; full-replace this item's accounts/holdings |
+| GET | `/api/plaid/status` | Connection status (institution, last sync, whether Plaid is configured) |
+| DELETE | `/api/plaid/disconnect/{connection_id}` | `item/remove` + drop token; synced holdings retained |
 
 ### IBKR (Client Portal Gateway, positions sync)
 | Method | Path | Description |
@@ -297,6 +298,8 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting broker tokens |
 | `ANTHROPIC_API_KEY` | Anthropic API key for the chat advisor |
 | `IBKR_CLIENT_ID` / `IBKR_CLIENT_SECRET` | Optional, only for IBKR OAuth |
+| `PLAID_CLIENT_ID` / `PLAID_SECRET` | Plaid keys for Fidelity / bank import (optional) |
+| `PLAID_ENV` | `sandbox` (fake institutions) / `development` / `production` |
 | `REDIS_URL` | Upstash / local Redis connection string |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
 
@@ -315,7 +318,7 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | **v2a — Portfolio dashboard** | ✅ Shipped | Holdings CRUD across stocks / ETFs / crypto / **options (OCC + ×100)** / real estate / vehicles / other; Yahoo Finance quote fetcher with 5-min cache; allocation donut (a slice per underlying group by net value), stats cards (Total Value / Today / Total Return / Positions), collapsible group-summary table (expand a ticker to its legs, with animated expand); type-aware add form |
 | **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
 | **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Parses options from `contractDesc` (IBKR doesn't populate structured strike/expiry fields on the gateway), preserves long/short sign so P&L math is correct on credit spreads and naked shorts, and groups stock + related options by underlying ticker on the dashboard (including corporate-action-adjusted roots like `GME1` → `GME`). Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
-| **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
+| **v2d — Plaid integration** | ✅ Shipped (investments) | Plaid Link → exchange → investments-holdings sync for Fidelity (IRA / Roth / 529 / brokerage); each Plaid account becomes a typed `accounts` row, holdings full-replace per item, access token Fernet-encrypted. Banks/spending (transactions) + cash-value insurance (IUL/VUL, manual) still to come |
 | **v2e — Options analytics & risk** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure + theta/day from IBKR greeks (`holdings.greeks`); **margin / buying power** + an **aggressiveness scorecard** (margin utilization, leverage, concentration, −10%/+10-IV shock loss, rated 🟢🟡🟠🔴) from the IBKR account summary (`accounts.balances`); expirations as a **timeline**; moneyness + intrinsic/extrinsic and assignment-risk / near-expiry flags. Sync carries greeks forward so a flaky fetch doesn't wipe them |
 | **v2f — Net-worth time series** | ✅ Shipped | Daily net-worth snapshots into `net_worth_snapshots` (recorded opportunistically on each dashboard visit, idempotent per day; `POST /api/portfolio/snapshot` for a cron) + a trend chart on `/dashboard/portfolio` |
 | **v3 — Analytics dashboard** | ⏳ | Spending by category, budget vs actual, weekly AI insight card (net-worth-over-time ✅ done in v2f) |
