@@ -202,6 +202,8 @@ export default function PortfolioPage() {
 
             <NetWorthChart token={token} />
 
+            <TaxBreakdown byTax={summary.by_tax_treatment} />
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
               <div className="lg:col-span-1 border border-gray-200 rounded-2xl p-6">
                 <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
@@ -243,6 +245,47 @@ export default function PortfolioPage() {
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+const TAX_BUCKETS: [string, string, string][] = [
+  ["taxable", "Taxable", "bg-gray-400"],
+  ["tax_deferred", "Tax-deferred", "bg-blue-400"],
+  ["tax_free", "Tax-free", "bg-emerald-400"],
+  ["education", "529 / Education", "bg-violet-400"],
+];
+
+function TaxBreakdown({ byTax }: { byTax?: Record<string, number> }) {
+  if (!byTax) return null;
+  const items = TAX_BUCKETS.filter(([k]) => byTax[k] != null).map(([k, label, color]) => ({
+    key: k,
+    label,
+    color,
+    value: byTax[k],
+  }));
+  if (items.length <= 1) return null;
+  const sum = items.reduce((s, i) => s + Math.abs(i.value), 0) || 1;
+  return (
+    <div className="border border-gray-200 rounded-2xl p-6 mb-8">
+      <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">By tax treatment</h3>
+      <div className="flex h-3 rounded-full overflow-hidden mb-4 bg-gray-100">
+        {items.map((i) => (
+          <div key={i.key} className={i.color} style={{ width: `${(Math.abs(i.value) / sum) * 100}%` }} title={i.label} />
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {items.map((i) => (
+          <div key={i.key}>
+            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-2.5 h-2.5 rounded-sm ${i.color}`} />
+              {i.label}
+            </div>
+            <div className="mt-1 text-lg font-semibold tabular-nums text-gray-900">{fmtCurrency(i.value)}</div>
+            <div className="text-xs text-gray-400">{((Math.abs(i.value) / sum) * 100).toFixed(1)}%</div>
+          </div>
+        ))}
       </div>
     </div>
   );

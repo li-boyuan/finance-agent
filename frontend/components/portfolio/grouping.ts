@@ -25,6 +25,9 @@ export interface HoldingRow {
   day_change_pct: number;
   allocation_pct: number;
   quote_available: boolean;
+  provider?: string;
+  tax_treatment?: string;
+  account?: string;
 }
 
 export interface HoldingGroup {
@@ -47,6 +50,7 @@ export interface PortfolioSummary {
   today_change: number;
   today_change_pct: number;
   positions_count: number;
+  by_tax_treatment?: Record<string, number>;
   holdings: HoldingRow[];
 }
 

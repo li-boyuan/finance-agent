@@ -197,6 +197,11 @@ function HoldingTableRow({
           <span className="text-[10px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
             {TYPE_BADGE[h.security_type] || h.security_type.slice(0, 3).toUpperCase()}
           </span>
+          {h.provider && h.provider !== "manual" && (
+            <span className="text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded">
+              {h.provider === "ibkr" ? "IBKR" : h.provider === "plaid" ? "FID" : h.provider.toUpperCase()}
+            </span>
+          )}
           {h.is_short && (
             <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">
               SHORT
