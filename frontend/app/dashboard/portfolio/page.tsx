@@ -4,6 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { GroupedHoldingsTable } from "@/components/portfolio/GroupedHoldingsTable";
+import {
+  PortfolioSummary,
+  buildGroups,
+  colorClass,
+  fmtCurrency,
+  fmtPct,
+} from "@/components/portfolio/grouping";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -11,124 +19,6 @@ const PALETTE = [
   "#10b981", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899",
   "#06b6d4", "#84cc16", "#f97316", "#a855f7", "#14b8a6",
 ];
-
-interface OptionMeta {
-  underlying: string;
-  expiry: string;
-  strike: number;
-  option_type: "C" | "P";
-}
-
-interface HoldingRow {
-  id: string;
-  symbol: string;
-  name: string;
-  security_type: string;
-  is_market: boolean;
-  is_option?: boolean;
-  is_short?: boolean;
-  option_meta?: OptionMeta | null;
-  quantity: number;
-  cost_basis: number;
-  price: number;
-  value: number;
-  cost_total: number;
-  total_return: number;
-  total_return_pct: number;
-  day_change: number;
-  day_change_pct: number;
-  allocation_pct: number;
-  quote_available: boolean;
-}
-
-interface HoldingGroup {
-  key: string;        // grouping key (underlying ticker, or "__assets__" / "__other__")
-  label: string;      // display label
-  rows: HoldingRow[]; // child rows
-  totalValue: number;
-  totalCost: number;
-  totalReturn: number;
-  totalReturnPct: number;
-  totalDayChange: number;
-}
-
-function groupingKey(h: HoldingRow): string {
-  if (h.is_option && h.option_meta) return h.option_meta.underlying;
-  if (h.is_market) return h.symbol;
-  return "__assets__";
-}
-
-function buildGroups(holdings: HoldingRow[]): HoldingGroup[] {
-  const buckets: Record<string, HoldingRow[]> = {};
-  for (const h of holdings) {
-    const key = groupingKey(h);
-    (buckets[key] = buckets[key] || []).push(h);
-  }
-  const groups: HoldingGroup[] = Object.entries(buckets).map(([key, rows]) => {
-    // Sort children: stock first, then options sorted by expiry then strike.
-    rows.sort((a: HoldingRow, b: HoldingRow) => {
-      if (!!a.is_option !== !!b.is_option) return a.is_option ? 1 : -1;
-      if (a.is_option && b.is_option) {
-        const ea = a.option_meta?.expiry || "";
-        const eb = b.option_meta?.expiry || "";
-        if (ea !== eb) return ea.localeCompare(eb);
-        return (a.option_meta?.strike || 0) - (b.option_meta?.strike || 0);
-      }
-      return a.symbol.localeCompare(b.symbol);
-    });
-    const totalValue = rows.reduce((s: number, r: HoldingRow) => s + r.value, 0);
-    const totalCost = rows.reduce((s: number, r: HoldingRow) => s + r.cost_total, 0);
-    const totalReturn = rows.reduce((s: number, r: HoldingRow) => s + r.total_return, 0);
-    const totalDayChange = rows.reduce((s: number, r: HoldingRow) => s + r.day_change, 0);
-    const totalReturnPct = totalCost ? (totalReturn / Math.abs(totalCost)) * 100 : 0;
-    const label = key === "__assets__" ? "Other Assets" : key;
-    return {
-      key, label, rows,
-      totalValue, totalCost, totalReturn, totalReturnPct, totalDayChange,
-    };
-  });
-  // Sort groups by absolute exposure so big shorts stay near the top.
-  groups.sort((a, b) => Math.abs(b.totalValue) - Math.abs(a.totalValue));
-  return groups;
-}
-
-const TYPE_BADGE: Record<string, string> = {
-  stock: "STK",
-  etf: "ETF",
-  mutual_fund: "MF",
-  bond: "BND",
-  crypto: "CRY",
-  option: "OPT",
-  real_estate: "RE",
-  vehicle: "CAR",
-  other: "OTH",
-};
-
-interface Summary {
-  total_value: number;
-  total_cost: number;
-  total_return: number;
-  total_return_pct: number;
-  today_change: number;
-  today_change_pct: number;
-  positions_count: number;
-  holdings: HoldingRow[];
-}
-
-function fmtCurrency(n: number) {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-
-function fmtPct(n: number) {
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(2)}%`;
-}
-
-function colorClass(n: number) {
-  if (n > 0) return "text-emerald-600";
-  if (n < 0) return "text-red-600";
-  return "text-gray-500";
-}
 
 function Donut({ data }: { data: { label: string; value: number; color: string }[] }) {
   const total = data.reduce((s, d) => s + d.value, 0) || 1;
@@ -175,7 +65,7 @@ export default function PortfolioPage() {
   const router = useRouter();
   const supabase = createClient();
   const [token, setToken] = useState<string>("");
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -203,7 +93,7 @@ export default function PortfolioPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: Summary = await res.json();
+        const data: PortfolioSummary = await res.json();
         setSummary(data);
       } catch (e) {
         setError((e as Error).message);
@@ -341,30 +231,7 @@ export default function PortfolioPage() {
               </div>
 
               <div className="lg:col-span-2 border border-gray-200 rounded-2xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                      <th className="px-4 py-3">Symbol</th>
-                      <th className="px-4 py-3 text-right">Qty</th>
-                      <th className="px-4 py-3 text-right">Price</th>
-                      <th className="px-4 py-3 text-right">Day</th>
-                      <th className="px-4 py-3 text-right">Value</th>
-                      <th className="px-4 py-3 text-right">Return</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groups.map((g) => {
-                      const showHeader = g.rows.length > 1 || g.key === "__assets__";
-                      return (
-                        <GroupRows
-                          key={g.key}
-                          group={g}
-                          showHeader={showHeader}
-                        />
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <GroupedHoldingsTable holdings={summary.holdings} />
               </div>
             </div>
 
@@ -408,76 +275,5 @@ function StatCard({
         </div>
       )}
     </div>
-  );
-}
-
-function GroupRows({ group, showHeader }: { group: HoldingGroup; showHeader: boolean }) {
-  return (
-    <>
-      {showHeader && (
-        <tr className="bg-gray-50 border-b border-gray-200">
-          <td className="px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-gray-900">{group.label}</span>
-              <span className="text-xs text-gray-500">
-                {group.rows.length} position{group.rows.length === 1 ? "" : "s"}
-              </span>
-            </div>
-          </td>
-          <td colSpan={2}></td>
-          <td className={`px-4 py-2.5 text-right tabular-nums text-xs ${colorClass(group.totalDayChange)}`}>
-            {fmtCurrency(group.totalDayChange)}
-          </td>
-          <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
-            {fmtCurrency(group.totalValue)}
-          </td>
-          <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${colorClass(group.totalReturn)}`}>
-            {fmtPct(group.totalReturnPct)}
-          </td>
-        </tr>
-      )}
-      {group.rows.map((h) => (
-        <HoldingTableRow key={h.id} holding={h} indented={showHeader} />
-      ))}
-    </>
-  );
-}
-
-function HoldingTableRow({ holding: h, indented }: { holding: HoldingRow; indented: boolean }) {
-  const displayName = h.is_option ? (h.name || h.symbol) : (h.is_market ? h.symbol : h.name);
-  return (
-    <tr className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-      <td className={`px-4 py-3 ${indented ? "pl-8" : ""}`}>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-gray-900">{displayName}</span>
-          <span className="text-[10px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-            {TYPE_BADGE[h.security_type] || h.security_type.slice(0, 3).toUpperCase()}
-          </span>
-          {h.is_short && (
-            <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">
-              SHORT
-            </span>
-          )}
-        </div>
-        {h.is_market && !h.is_option && h.name && (
-          <div className="text-xs text-gray-500 truncate max-w-[220px]">{h.name}</div>
-        )}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-        {h.is_market ? h.quantity : "—"}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        {h.is_market ? (h.quote_available ? fmtCurrency(h.price) : "—") : "—"}
-      </td>
-      <td className={`px-4 py-3 text-right tabular-nums ${h.is_market ? colorClass(h.day_change) : "text-gray-400"}`}>
-        {h.is_market ? (h.quote_available ? fmtPct(h.day_change_pct) : "—") : "—"}
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        {fmtCurrency(h.value)}
-      </td>
-      <td className={`px-4 py-3 text-right tabular-nums ${colorClass(h.total_return)}`}>
-        {fmtPct(h.total_return_pct)}
-      </td>
-    </tr>
   );
 }
