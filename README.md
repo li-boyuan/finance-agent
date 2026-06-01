@@ -114,7 +114,8 @@ finance-agent/
 │   ├── 003_user_context.sql        # profiles.financial_context
 │   ├── 004_asset_types.sql         # holdings.security_type adds real_estate / vehicle
 │   ├── 005_account_auth_config.sql # account_connections.auth_config (jsonb)
-│   └── 006_holdings_greeks.sql     # holdings.greeks (jsonb) — option delta/gamma/theta/vega
+│   ├── 006_holdings_greeks.sql     # holdings.greeks (jsonb) — option delta/gamma/theta/vega
+│   └── 007_account_balances.sql    # accounts.balances (jsonb) — margin / buying power
 └── docker-compose.yml              # Local Postgres + Redis (dev only)
 ```
 
@@ -146,7 +147,7 @@ finance-agent/
 ### Options analytics
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/options/analytics` | Per-underlying delta-adjusted exposure + theta/day (from IBKR greeks), portfolio-level net Δ$ / theta, expiration calendar, moneyness, and assignment-risk / near-expiry flags |
+| GET | `/api/options/analytics` | Per-underlying delta-adjusted exposure + theta/day (from IBKR greeks), portfolio net Δ$ / theta / vega, margin & buying power, an aggressiveness scorecard (margin utilization, leverage, concentration, −10%/+10-IV shock loss), expiration calendar, moneyness, and assignment-risk / near-expiry flags |
 
 ### Accounts, transactions, budgets, goals (read-only stubs until Plaid lands)
 | Method | Path | Description |
@@ -190,7 +191,7 @@ finance-agent/
 |-------|---------|
 | `profiles` | User profile, includes free-form `financial_context` for the chat advisor |
 | `account_connections` | OAuth / API tokens (encrypted) for ibkr / plaid / manual sources |
-| `accounts` | Provider-agnostic accounts: depository / credit / investment / retirement / loan |
+| `accounts` | Provider-agnostic accounts: depository / credit / investment / retirement / loan. `balances` jsonb holds the IBKR account summary (net liquidation, excess liquidity, buying power, maintenance margin, gross position value) captured at sync |
 | `transactions` | Bank + investment transactions; positive = inflow |
 | `holdings` | Investment + asset positions: stocks, ETFs, crypto, options (OCC symbols), real estate, vehicles. Cost basis + current value, historical snapshots by `as_of` date; `greeks` jsonb (option delta/gamma/theta/vega captured at IBKR sync) |
 | `budgets` | Per-category spending limits (weekly / monthly / yearly) |
@@ -250,6 +251,7 @@ pip install -r requirements.txt
 #   4. supabase/migrations/004_asset_types.sql
 #   5. supabase/migrations/005_account_auth_config.sql
 #   6. supabase/migrations/006_holdings_greeks.sql
+#   7. supabase/migrations/007_account_balances.sql
 
 # Generate Fernet key for encrypting broker tokens
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -312,7 +314,7 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
 | **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Parses options from `contractDesc` (IBKR doesn't populate structured strike/expiry fields on the gateway), preserves long/short sign so P&L math is correct on credit spreads and naked shorts, and groups stock + related options by underlying ticker on the dashboard (including corporate-action-adjusted roots like `GME1` → `GME`). Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
 | **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
-| **v2e — Options analytics** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure + theta/day from IBKR model greeks (captured at sync into `holdings.greeks`), portfolio-level net Δ$ and theta/day, expiration calendar with DTE, moneyness + intrinsic/extrinsic, and assignment-risk / near-expiry flags |
+| **v2e — Options analytics & risk** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure + theta/day from IBKR greeks (`holdings.greeks`); **margin / buying power** + an **aggressiveness scorecard** (margin utilization, leverage, concentration, −10%/+10-IV shock loss, rated 🟢🟡🟠🔴) from the IBKR account summary (`accounts.balances`); expirations as a **timeline**; moneyness + intrinsic/extrinsic and assignment-risk / near-expiry flags. Sync carries greeks forward so a flaky fetch doesn't wipe them |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
