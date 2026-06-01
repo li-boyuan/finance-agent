@@ -94,9 +94,11 @@ finance-agent/
 │   │       ├── layout.tsx          # Shared dashboard shell (top nav + sign out)
 │   │       ├── page.tsx            # Redirects → /dashboard/chat
 │   │       ├── chat/page.tsx       # ChatGPT-style chat UI + sidebar
-│   │       ├── portfolio/page.tsx  # Stats cards + allocation donut + holdings table
-│   │       ├── holdings/page.tsx   # Add / edit / delete holdings (type-aware form)
+│   │       ├── portfolio/page.tsx  # Stats cards + allocation donut + grouped holdings table
+│   │       ├── holdings/page.tsx   # Add form + IBKR panel + grouped holdings table w/ delete
 │   │       └── trades/page.tsx     # Legacy trade-journal dashboard
+│   ├── components/
+│   │   └── portfolio/              # Shared grouped-by-ticker holdings table + grouping helpers (used by portfolio + holdings)
 │   ├── lib/
 │   │   ├── api.ts                  # Typed fetch helper
 │   │   └── supabase/               # Browser + server Supabase clients
@@ -132,7 +134,7 @@ finance-agent/
 |--------|------|-------------|
 | GET | `/api/portfolio/summary` | Total value, today change, total return, allocation %, enriched per-holding rows with live quotes |
 | GET | `/api/holdings/` | List all holdings (raw, no quotes) |
-| POST | `/api/holdings/` | Add a holding. Polymorphic body: stocks/ETFs/crypto use `symbol`; options use `underlying`+`expiry`+`strike`+`option_type`; real estate / vehicle / other use `name`+`current_value` |
+| POST | `/api/holdings/` | Add a holding. Polymorphic body: stocks/ETFs/crypto use `symbol`; options use `underlying`+`expiry`+`strike`+`option_type`; real estate / vehicle / other use `name`+`current_value`. Quantity may be negative for short positions |
 | PUT | `/api/holdings/{id}` | Update quantity / cost basis / current value |
 | DELETE | `/api/holdings/{id}` | Remove a holding |
 
