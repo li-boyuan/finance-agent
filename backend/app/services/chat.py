@@ -77,6 +77,21 @@ def build_messages(prior: list[dict], user_content: str) -> list[dict]:
     return messages
 
 
+def _to_content_param(block) -> dict:
+    """Convert an SDK response content block back into an API-valid content param
+    for replay. model_dump() leaks SDK-only fields (e.g. text blocks now carry
+    `parsed_output`) that the Messages API rejects as 'extra inputs', so map the
+    block types we use explicitly and strip extras on the fallback."""
+    btype = getattr(block, "type", None)
+    if btype == "text":
+        return {"type": "text", "text": block.text}
+    if btype == "tool_use":
+        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+    data = block.model_dump()
+    data.pop("parsed_output", None)
+    return data
+
+
 async def stream_chat(
     user_id: str,
     prior_messages: list[dict],
@@ -133,7 +148,7 @@ async def stream_chat(
         # Replay the assistant turn (text + tool_use blocks) before responding with tool_results.
         messages.append({
             "role": "assistant",
-            "content": [block.model_dump() for block in final.content],
+            "content": [_to_content_param(block) for block in final.content],
         })
 
         tool_results: list[dict] = []
