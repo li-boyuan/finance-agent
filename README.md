@@ -138,7 +138,9 @@ finance-agent/
 ### Portfolio (live)
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/portfolio/summary` | Total value, today change, total return, allocation %, enriched per-holding rows with live quotes |
+| GET | `/api/portfolio/summary` | Total value, today change, total return, allocation %, enriched per-holding rows with live quotes. Also records today's net-worth snapshot |
+| GET | `/api/portfolio/history` | Net-worth time series (`?days=`), ascending by date |
+| POST | `/api/portfolio/snapshot` | Record today's net-worth snapshot (idempotent per day; for a daily cron) |
 | GET | `/api/holdings/` | List all holdings (raw, no quotes) |
 | POST | `/api/holdings/` | Add a holding. Polymorphic body: stocks/ETFs/crypto use `symbol`; options use `underlying`+`expiry`+`strike`+`option_type`; real estate / vehicle / other use `name`+`current_value`. Quantity may be negative for short positions |
 | PUT | `/api/holdings/{id}` | Update quantity / cost basis / current value |
@@ -315,7 +317,8 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Parses options from `contractDesc` (IBKR doesn't populate structured strike/expiry fields on the gateway), preserves long/short sign so P&L math is correct on credit spreads and naked shorts, and groups stock + related options by underlying ticker on the dashboard (including corporate-action-adjusted roots like `GME1` → `GME`). Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
 | **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
 | **v2e — Options analytics & risk** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure + theta/day from IBKR greeks (`holdings.greeks`); **margin / buying power** + an **aggressiveness scorecard** (margin utilization, leverage, concentration, −10%/+10-IV shock loss, rated 🟢🟡🟠🔴) from the IBKR account summary (`accounts.balances`); expirations as a **timeline**; moneyness + intrinsic/extrinsic and assignment-risk / near-expiry flags. Sync carries greeks forward so a flaky fetch doesn't wipe them |
-| **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
+| **v2f — Net-worth time series** | ✅ Shipped | Daily net-worth snapshots into `net_worth_snapshots` (recorded opportunistically on each dashboard visit, idempotent per day; `POST /api/portfolio/snapshot` for a cron) + a trend chart on `/dashboard/portfolio` |
+| **v3 — Analytics dashboard** | ⏳ | Spending by category, budget vs actual, weekly AI insight card (net-worth-over-time ✅ done in v2f) |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
 | **v6 — Tax intelligence** | ⏳ | Capital gains tracking, tax-loss harvesting suggestions, deduction surface, year-end CSV — positioned as **tax-aware copilot**, not tax advisor |
