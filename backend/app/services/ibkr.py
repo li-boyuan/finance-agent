@@ -61,6 +61,17 @@ class IBKRClient:
                 break
         return positions
 
+    async def get_account_summary(self, account_id: str | None = None) -> dict:
+        """Account summary: net liquidation, excess liquidity, buying power,
+        margin requirements, gross position value. Keys are lowercased tags,
+        each typically {amount, currency, ...}."""
+        acct = account_id or self.account_id
+        if not acct:
+            raise ValueError("account_id required for account summary")
+        resp = await self._client.get(f"/portfolio/{acct}/summary")
+        resp.raise_for_status()
+        return resp.json() or {}
+
     async def tickle(self) -> dict:
         """Keep the gateway session alive. Call before reads if the connection
         has been idle."""

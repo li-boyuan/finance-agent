@@ -36,6 +36,36 @@ GREEK_FIELDS = {
 }
 
 
+def _summary_amount(low: dict, *keys: str) -> float | None:
+    """Pull a numeric amount from an IBKR account-summary value, which is usually
+    {amount: float, ...} but sometimes a bare scalar. Tries keys in order."""
+    for k in keys:
+        v = low.get(k)
+        if isinstance(v, dict):
+            v = v.get("amount")
+        if v not in (None, ""):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def parse_account_summary(raw: dict) -> dict:
+    """Map an IBKR account summary to the balances we store. Missing tags -> None."""
+    low = {(k.lower() if isinstance(k, str) else k): v for k, v in (raw or {}).items()}
+    return {
+        "net_liquidation": _summary_amount(low, "netliquidation"),
+        "excess_liquidity": _summary_amount(low, "excessliquidity"),
+        "buying_power": _summary_amount(low, "buyingpower"),
+        "available_funds": _summary_amount(low, "availablefunds"),
+        "gross_position_value": _summary_amount(low, "grosspositionvalue"),
+        "maint_margin": _summary_amount(low, "fullmaintmarginreq", "maintmarginreq"),
+        "init_margin": _summary_amount(low, "fullinitmarginreq", "initmarginreq"),
+        "as_of": date.today().isoformat(),
+    }
+
+
 async def _fetch_greeks(client: IBKRClient, conids: list) -> dict[str, dict]:
     """Best-effort conid -> {delta, gamma, ...}. Returns {} on any failure;
     greeks are optional and positions still sync without them."""
@@ -368,9 +398,38 @@ async def sync_positions(
             if len(skipped_samples) < MAX_SKIPPED_SAMPLES:
                 skipped_samples.append(_slim_for_diagnostics(raw))
 
+    # Carry forward last-known greeks so a failed/partial greeks fetch this run
+    # doesn't wipe them on the full-replace. Stale greeks beat no greeks.
+    if greeks_seen < options_seen:
+        try:
+            prev = db.table("holdings").select("symbol, greeks").eq("account_id", account_id).execute()
+            prev_greeks = {r["symbol"]: r["greeks"] for r in (prev.data or []) if r.get("greeks")}
+        except Exception:
+            prev_greeks = {}
+        carried = 0
+        for row in rows:
+            if row["security_type"] == "option" and not row.get("greeks"):
+                g = prev_greeks.get(row["symbol"])
+                if g:
+                    row["greeks"] = g
+                    carried += 1
+        if carried:
+            logger.info("Carried forward greeks for %d option legs (fresh fetch missed them)", carried)
+        greeks_seen = sum(1 for r in rows if r["security_type"] == "option" and r.get("greeks"))
+
     db.table("holdings").delete().eq("account_id", account_id).execute()
     if rows:
         db.table("holdings").insert(rows).execute()
+
+    # Account summary (margin / buying power) — best-effort; stored on the
+    # accounts row for the options risk view. Needs migration 007 for the column.
+    balances = None
+    try:
+        balances = parse_account_summary(await client.get_account_summary(ibkr_account_id))
+        logger.info("Account balances: %s", balances)
+        db.table("accounts").update({"balances": balances}).eq("id", account_id).execute()
+    except Exception:
+        logger.warning("Account summary fetch/store failed; continuing", exc_info=True)
 
     logger.info(
         "Sync complete: synced=%d, skipped=%d, options_seen=%d",
@@ -382,6 +441,7 @@ async def sync_positions(
         "skipped": skipped,
         "options_seen": options_seen,
         "greeks_seen": greeks_seen,
+        "balances_synced": bool(balances and balances.get("net_liquidation") is not None),
         "skipped_samples": skipped_samples,
         "account_id": account_id,
     }
