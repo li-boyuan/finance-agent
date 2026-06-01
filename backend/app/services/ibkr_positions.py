@@ -17,7 +17,7 @@ import re
 from datetime import date, datetime
 
 from app.services.ibkr import IBKRClient
-from app.services.options import build_occ_symbol
+from app.services.options import CONTRACT_MULTIPLIER, build_occ_symbol
 
 logger = logging.getLogger("ibkr.positions")
 
@@ -322,6 +322,25 @@ def map_position_to_holding(
         "currency": (raw.get("currency") or "USD").upper(),
         "as_of": date.today().isoformat(),
     }
+
+    # Store IBKR's own mark so positions Yahoo can't quote (adjusted / illiquid
+    # options) value off IBKR instead of cost basis. portfolio.py prefers a live
+    # Yahoo quote and falls back to this stored price. Derive the per-unit price
+    # from mktValue to sidestep IBKR's per-share vs per-contract ambiguity.
+    multiplier = CONTRACT_MULTIPLIER if sec_type == "option" else 1
+    mkt_value = raw.get("mktValue")
+    if mkt_value in (None, ""):
+        mkt_value = raw.get("marketValue")
+    if mkt_value not in (None, ""):
+        try:
+            mv = float(mkt_value)
+            row["current_value"] = round(mv, 4)
+            denom = qty * multiplier
+            if denom:
+                row["current_price"] = round(mv / denom, 6)
+        except (TypeError, ValueError):
+            pass
+
     if sec_type == "option" and greeks_by_conid:
         g = greeks_by_conid.get(str(raw.get("conid")))
         if g:
@@ -333,7 +352,7 @@ def _slim_for_diagnostics(raw: dict) -> dict:
     """Pick the fields most useful for diagnosing a skipped row."""
     keys = (
         "assetClass", "secType", "ticker", "symbol", "contractDesc", "description",
-        "position", "avgCost", "currency",
+        "position", "avgCost", "mktPrice", "mktValue", "marketValue", "currency",
         "undSym", "underSymbol", "strike", "strikePrice",
         "expirationDate", "lastTradingDay", "maturityDate",
         "putOrCall", "right", "callPut",
