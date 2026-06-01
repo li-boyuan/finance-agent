@@ -20,8 +20,26 @@ def _empty_summary() -> dict:
         "today_change": 0,
         "today_change_pct": 0,
         "positions_count": 0,
+        "by_tax_treatment": {},
         "holdings": [],
     }
+
+
+def _tax_treatment(provider: str, subtype: str | None, name: str | None) -> str:
+    """Map an account to a tax bucket. Plaid subtypes are imperfect (a 401k
+    self-directed 'BrokerageLink' is labeled 'brokerage'; a DAF is 'brokerage'),
+    so we also sniff the account name."""
+    s = (subtype or "").lower()
+    nm = (name or "").lower()
+    if "giving" in nm or "charitable" in nm:
+        return "charitable"  # donor-advised fund — gifted, excluded from net worth
+    if s in ("roth", "hsa"):
+        return "tax_free"
+    if s == "529":
+        return "education"
+    if s in ("401k", "403b", "ira", "retirement") or "brokeragelink" in nm:
+        return "tax_deferred"
+    return "taxable"
 
 
 async def compute_portfolio_summary(db, user_id: str) -> dict:
@@ -30,13 +48,38 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
         db.table("holdings")
         .select(
             "id, symbol, name, security_type, quantity, cost_basis, "
-            "current_price, current_value, currency, as_of"
+            "current_price, current_value, currency, as_of, account_id"
         )
         .eq("user_id", user_id)
         .order("symbol")
         .execute()
     )
     rows = holdings.data or []
+    if not rows:
+        return _empty_summary()
+
+    # Tag each holding with its account source + tax treatment. The DAF
+    # (charitable) is excluded from net worth per the owner's choice.
+    accts = (
+        db.table("accounts").select("id, name, subtype, connection_id").eq("user_id", user_id).execute().data or []
+    )
+    providers = {
+        c["id"]: c.get("provider")
+        for c in (db.table("account_connections").select("id, provider").eq("user_id", user_id).execute().data or [])
+    }
+    account_meta: dict[str, dict] = {}
+    for a in accts:
+        provider = providers.get(a.get("connection_id")) or "manual"
+        account_meta[a["id"]] = {
+            "account": a.get("name"),
+            "provider": provider,
+            "tax_treatment": _tax_treatment(provider, a.get("subtype"), a.get("name")),
+        }
+
+    rows = [
+        r for r in rows
+        if account_meta.get(r.get("account_id"), {}).get("tax_treatment") != "charitable"
+    ]
     if not rows:
         return _empty_summary()
 
@@ -101,6 +144,7 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
         gain_pct = (gain / abs(cost_total) * 100) if cost_total else 0.0
         day_change_pct = (day_change / abs(prev_value) * 100) if prev_value else 0.0
         is_short = qty < 0
+        meta = account_meta.get(r.get("account_id"), {})
 
         enriched.append({
             "id": r["id"],
@@ -111,6 +155,9 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
             "is_option": is_option,
             "is_short": is_short,
             "option_meta": option_meta,
+            "account": meta.get("account"),
+            "provider": meta.get("provider", "manual"),
+            "tax_treatment": meta.get("tax_treatment", "taxable"),
             "quantity": qty,
             "cost_basis": cost_basis,
             "price": round(price, 4),
@@ -131,8 +178,11 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
     total_return = total_value - total_cost
     total_return_pct = (total_return / total_cost * 100) if total_cost else 0.0
 
+    by_tax: dict[str, float] = {}
     for h in enriched:
         h["allocation_pct"] = round((h["value"] / total_value * 100) if total_value else 0, 2)
+        bucket = h.get("tax_treatment") or "taxable"
+        by_tax[bucket] = by_tax.get(bucket, 0.0) + h["value"]
 
     return {
         "total_value": round(total_value, 2),
@@ -142,6 +192,7 @@ async def compute_portfolio_summary(db, user_id: str) -> dict:
         "today_change": round(today_change, 2),
         "today_change_pct": round(today_change_pct, 2),
         "positions_count": len(enriched),
+        "by_tax_treatment": {k: round(v, 2) for k, v in by_tax.items()},
         "holdings": enriched,
     }
 
