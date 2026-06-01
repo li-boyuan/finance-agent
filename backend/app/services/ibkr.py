@@ -68,6 +68,30 @@ class IBKRClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def init_brokerage_session(self) -> None:
+        """Best-effort init of the brokerage session. The /iserver/* market-data
+        endpoints return nothing until this has been hit at least once."""
+        try:
+            await self._client.get("/iserver/accounts")
+        except Exception:
+            logger.debug("iserver/accounts init failed", exc_info=True)
+
+    async def get_market_data_snapshot(self, conids: list, fields: list[str]) -> list[dict]:
+        """Snapshot market data (incl. option greeks) for the given conids.
+
+        The CP API primes the subscription on the first request and only fills
+        computed fields (greeks) on a subsequent call — callers should request
+        twice with a short pause."""
+        if not conids:
+            return []
+        params = {
+            "conids": ",".join(str(c) for c in conids),
+            "fields": ",".join(fields),
+        }
+        resp = await self._client.get("/iserver/marketdata/snapshot", params=params)
+        resp.raise_for_status()
+        return resp.json() or []
+
     async def close(self):
         await self._client.aclose()
 

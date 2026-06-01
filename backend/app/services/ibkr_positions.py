@@ -11,6 +11,7 @@ in the sync response so unknown shapes can be diagnosed without grepping
 logs.
 """
 
+import asyncio
 import logging
 import re
 from datetime import date, datetime
@@ -22,6 +23,56 @@ logger = logging.getLogger("ibkr.positions")
 
 IBKR_ACCOUNT_NAME = "IBKR Portfolio"
 MAX_SKIPPED_SAMPLES = 5
+
+# IBKR Client Portal market-data field codes for option model greeks. If a future
+# gateway version changes these, the diagnostic log in _fetch_greeks shows the
+# raw snapshot so the mapping can be corrected.
+GREEK_FIELDS = {
+    "7308": "delta",
+    "7309": "gamma",
+    "7310": "theta",
+    "7311": "vega",
+    "7283": "iv",  # implied vol — may arrive as a "%"-suffixed string
+}
+
+
+async def _fetch_greeks(client: IBKRClient, conids: list) -> dict[str, dict]:
+    """Best-effort conid -> {delta, gamma, ...}. Returns {} on any failure;
+    greeks are optional and positions still sync without them."""
+    conids = [c for c in conids if c]
+    if not conids:
+        return {}
+    await client.init_brokerage_session()
+    fields = list(GREEK_FIELDS.keys())
+    try:
+        # First call primes the subscription; the second returns computed values.
+        await client.get_market_data_snapshot(conids, fields)
+        await asyncio.sleep(0.6)
+        snap = await client.get_market_data_snapshot(conids, fields)
+    except Exception:
+        logger.warning("Greeks snapshot failed; syncing without greeks", exc_info=True)
+        return {}
+
+    if snap:
+        logger.info("Greeks snapshot sample (verify field codes): %s", snap[0])
+
+    result: dict[str, dict] = {}
+    for row in snap:
+        conid = str(row.get("conid") or "")
+        if not conid:
+            continue
+        g: dict[str, float] = {}
+        for code, name in GREEK_FIELDS.items():
+            v = row.get(code)
+            if v in (None, ""):
+                continue
+            try:
+                g[name] = float(str(v).rstrip("%"))
+            except (TypeError, ValueError):
+                continue
+        if g:
+            result[conid] = g
+    return result
 
 
 def get_or_create_ibkr_account(db, user_id: str, connection_id: str, ibkr_account_id: str | None) -> str:
@@ -202,7 +253,12 @@ def _build_symbol_and_name(raw: dict, sec_type: str) -> tuple[str | None, str | 
     return ticker, raw.get("name") or raw.get("contractDesc")
 
 
-def map_position_to_holding(raw: dict, user_id: str, account_id: str) -> dict | None:
+def map_position_to_holding(
+    raw: dict,
+    user_id: str,
+    account_id: str,
+    greeks_by_conid: dict[str, dict] | None = None,
+) -> dict | None:
     """Map one IBKR position row → a holdings insert dict. Returns None to skip."""
     sec_type = _map_security_type(raw)
     if not sec_type:
@@ -222,7 +278,7 @@ def map_position_to_holding(raw: dict, user_id: str, account_id: str) -> dict | 
     if sec_type == "option" and avg_cost:
         avg_cost = avg_cost / 100.0
 
-    return {
+    row = {
         "user_id": user_id,
         "account_id": account_id,
         "symbol": symbol,
@@ -236,6 +292,11 @@ def map_position_to_holding(raw: dict, user_id: str, account_id: str) -> dict | 
         "currency": (raw.get("currency") or "USD").upper(),
         "as_of": date.today().isoformat(),
     }
+    if sec_type == "option" and greeks_by_conid:
+        g = greeks_by_conid.get(str(raw.get("conid")))
+        if g:
+            row["greeks"] = g
+    return row
 
 
 def _slim_for_diagnostics(raw: dict) -> dict:
@@ -272,9 +333,23 @@ async def sync_positions(
     raw_positions = await client.get_positions(ibkr_account_id)
     logger.info("IBKR returned %d total positions", len(raw_positions))
 
+    # Pull model greeks for option positions (best-effort) so the options
+    # analytics page can show delta-adjusted exposure.
+    option_conids = [
+        raw.get("conid")
+        for raw in raw_positions
+        if _map_security_type(raw) == "option" and raw.get("conid")
+    ]
+    greeks_by_conid = await _fetch_greeks(client, option_conids)
+    if option_conids:
+        logger.info(
+            "Greeks: requested %d option conids, got %d", len(option_conids), len(greeks_by_conid)
+        )
+
     rows: list[dict] = []
     skipped = 0
     options_seen = 0
+    greeks_seen = 0
     skipped_samples: list[dict] = []
 
     for raw in raw_positions:
@@ -283,8 +358,10 @@ async def sync_positions(
             options_seen += 1
             logger.info("Option row: %s", _slim_for_diagnostics(raw))
 
-        mapped = map_position_to_holding(raw, user_id, account_id)
+        mapped = map_position_to_holding(raw, user_id, account_id, greeks_by_conid)
         if mapped:
+            if mapped.get("greeks"):
+                greeks_seen += 1
             rows.append(mapped)
         else:
             skipped += 1
@@ -304,6 +381,7 @@ async def sync_positions(
         "synced": len(rows),
         "skipped": skipped,
         "options_seen": options_seen,
+        "greeks_seen": greeks_seen,
         "skipped_samples": skipped_samples,
         "account_id": account_id,
     }
