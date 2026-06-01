@@ -48,8 +48,12 @@ def sync_plaid_holdings(db, user_id: str, connection_id: str, payload: dict) -> 
 
     # One accounts row per Plaid account; map plaid account_id -> our accounts.id.
     acct_id_map: dict[str, str] = {}
+    balance_of: dict[str, float | None] = {}
+    name_of: dict[str, str] = {}
     for acct in accounts:
         plaid_acct_id = acct["account_id"]
+        balance_of[plaid_acct_id] = (acct.get("balances") or {}).get("current")
+        name_of[plaid_acct_id] = _account_name(acct)
         row = {
             "user_id": user_id,
             "connection_id": connection_id,
@@ -77,12 +81,15 @@ def sync_plaid_holdings(db, user_id: str, connection_id: str, payload: dict) -> 
     today = date.today().isoformat()
     rows: list[dict] = []
     skipped = 0
+    accts_with_holdings: set[str] = set()
     for h in holdings:
-        our_acct = acct_id_map.get(h.get("account_id"))
+        plaid_acct_id = h.get("account_id")
+        our_acct = acct_id_map.get(plaid_acct_id)
         qty = float(h.get("quantity") or 0)
         if not our_acct or qty == 0:
             skipped += 1
             continue
+        accts_with_holdings.add(plaid_acct_id)
         sec = securities.get(h.get("security_id")) or {}
         ticker = (sec.get("ticker_symbol") or "").upper().strip()
         name = sec.get("name")
@@ -125,6 +132,31 @@ def sync_plaid_holdings(db, user_id: str, connection_id: str, payload: dict) -> 
             pass
         rows.append(row)
 
+    # Balance fallback: when Plaid returns no positions for an account (common
+    # with Fidelity — balances available, holdings not), represent the account as
+    # a single line valued at its balance so it still counts toward net worth.
+    bal_added = 0
+    for plaid_acct_id, our_id in acct_id_map.items():
+        if plaid_acct_id in accts_with_holdings:
+            continue
+        bal = balance_of.get(plaid_acct_id)
+        if not bal:
+            continue
+        rows.append({
+            "user_id": user_id,
+            "account_id": our_id,
+            "symbol": f"PLAID:{plaid_acct_id}:BAL",
+            "name": f"{name_of.get(plaid_acct_id, 'Account')} balance",
+            "security_type": "other",
+            "quantity": 1,
+            "cost_basis": round(float(bal), 4),
+            "current_price": round(float(bal), 6),
+            "current_value": round(float(bal), 4),
+            "currency": "USD",
+            "as_of": today,
+        })
+        bal_added += 1
+
     # Full-replace across ALL of this connection's accounts (including any that
     # vanished from this payload), so no stale holdings linger.
     conn_accts = (
@@ -141,6 +173,12 @@ def sync_plaid_holdings(db, user_id: str, connection_id: str, payload: dict) -> 
         db.table("holdings").insert(rows).execute()
 
     logger.info(
-        "Plaid sync: accounts=%d synced=%d skipped=%d", len(acct_id_map), len(rows), skipped
+        "Plaid sync: accounts=%d synced=%d (balance-fallback=%d) skipped=%d",
+        len(acct_id_map), len(rows), bal_added, skipped,
     )
-    return {"accounts": len(acct_id_map), "synced": len(rows), "skipped": skipped}
+    return {
+        "accounts": len(acct_id_map),
+        "synced": len(rows),
+        "balance_fallback": bal_added,
+        "skipped": skipped,
+    }
