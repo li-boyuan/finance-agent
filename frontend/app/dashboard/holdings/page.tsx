@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { IBKRConnect } from "./IBKRConnect";
+import { GroupedHoldingsTable } from "@/components/portfolio/GroupedHoldingsTable";
+import { PortfolioSummary } from "@/components/portfolio/grouping";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -20,27 +22,11 @@ const ASSET_TYPES: { value: string; label: string; kind: FormKind }[] = [
   { value: "other", label: "Other Asset", kind: "asset" },
 ];
 
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(
-  ASSET_TYPES.map((t) => [t.value, t.label]),
-);
-
-interface Holding {
-  id: string;
-  symbol: string;
-  name: string | null;
-  security_type: string;
-  quantity: number;
-  cost_basis: number;
-  current_price: number | null;
-  current_value: number | null;
-  as_of: string;
-}
-
 export default function HoldingsPage() {
   const router = useRouter();
   const supabase = createClient();
   const [token, setToken] = useState<string>("");
-  const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,21 +59,23 @@ export default function HoldingsPage() {
     return () => subscription.unsubscribe();
   }, [router, supabase]);
 
-  const fetchHoldings = useCallback(async () => {
+  const fetchSummary = useCallback(async () => {
     if (!token) return;
-    const res = await fetch(`${API_URL}/api/holdings/`, {
+    const res = await fetch(`${API_URL}/api/portfolio/summary`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
-      const data = await res.json();
-      setHoldings(data.holdings || []);
+      setSummary(await res.json());
+    } else {
+      const errBody = await res.json().catch(() => ({}));
+      setError(errBody.detail || `Could not load holdings (HTTP ${res.status})`);
     }
     setLoading(false);
   }, [token]);
 
   useEffect(() => {
-    if (token) fetchHoldings();
-  }, [token, fetchHoldings]);
+    if (token) fetchSummary();
+  }, [token, fetchSummary]);
 
   const resetForm = () => {
     setSymbol("");
@@ -137,7 +125,7 @@ export default function HoldingsPage() {
         throw new Error(errBody.detail || `HTTP ${res.status}`);
       }
       resetForm();
-      await fetchHoldings();
+      await fetchSummary();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -148,19 +136,20 @@ export default function HoldingsPage() {
   const handleDelete = async (id: string) => {
     if (!token) return;
     if (!confirm("Delete this holding?")) return;
-    await fetch(`${API_URL}/api/holdings/${id}`, {
+    setError(null);
+    const res = await fetch(`${API_URL}/api/holdings/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
-    await fetchHoldings();
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      setError(errBody.detail || `HTTP ${res.status}`);
+      return;
+    }
+    await fetchSummary();
   };
 
-  // Group holdings: market (stocks/ETFs/crypto), options, other assets
-  const kindOf = (st: string): FormKind =>
-    ASSET_TYPES.find((t) => t.value === st)?.kind ?? "market";
-  const market = holdings.filter((h) => kindOf(h.security_type) === "market");
-  const options = holdings.filter((h) => kindOf(h.security_type) === "option");
-  const assets = holdings.filter((h) => kindOf(h.security_type) === "asset");
+  const positions = summary?.holdings ?? [];
 
   return (
     <div className="h-full overflow-y-auto">
@@ -170,7 +159,7 @@ export default function HoldingsPage() {
           Add stocks, crypto, real estate, vehicles, or anything else you want in your net worth.
         </p>
 
-        <IBKRConnect token={token} onSyncComplete={fetchHoldings} />
+        <IBKRConnect token={token} onSyncComplete={fetchSummary} />
 
         <div className="border border-gray-200 rounded-2xl p-6 mb-8">
           <h2 className="text-lg font-semibold mb-4">Add a holding manually</h2>
@@ -211,7 +200,6 @@ export default function HoldingsPage() {
                   <input
                     type="number"
                     step="0.0001"
-                    min="0"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     placeholder="100"
@@ -289,7 +277,6 @@ export default function HoldingsPage() {
                     <input
                       type="number"
                       step="1"
-                      min="0"
                       value={quantity}
                       onChange={(e) => setQuantity(e.target.value)}
                       placeholder="2"
@@ -314,7 +301,8 @@ export default function HoldingsPage() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Premium is per share — each contract is 100 shares.
+                  Premium is per share — each contract is 100 shares. Use a negative
+                  quantity for short (written) contracts.
                   {optStrike && quantity && costBasis ? (
                     <span className="block mt-1">
                       Total cost: <span className="font-medium text-gray-700">
@@ -385,113 +373,18 @@ export default function HoldingsPage() {
           </form>
         </div>
 
-        {market.length > 0 && (
-          <HoldingsSection
-            title="Investments"
-            holdings={market}
-            onDelete={handleDelete}
-          />
-        )}
-        {options.length > 0 && (
-          <HoldingsSection
-            title="Options"
-            holdings={options}
-            onDelete={handleDelete}
-            kind="option"
-          />
-        )}
-        {assets.length > 0 && (
-          <HoldingsSection
-            title="Other assets"
-            holdings={assets}
-            onDelete={handleDelete}
-            kind="asset"
-          />
-        )}
-        {!loading && holdings.length === 0 && (
-          <div className="text-center text-gray-400 py-12 border border-gray-200 rounded-2xl">
-            No holdings yet. Add your first above.
+        {positions.length > 0 ? (
+          <div className="border border-gray-200 rounded-2xl overflow-hidden">
+            <GroupedHoldingsTable holdings={positions} onDelete={handleDelete} />
           </div>
+        ) : (
+          !loading && summary !== null && (
+            <div className="text-center text-gray-400 py-12 border border-gray-200 rounded-2xl">
+              No holdings yet. Add your first above.
+            </div>
+          )
         )}
       </div>
-    </div>
-  );
-}
-
-function HoldingsSection({
-  title,
-  holdings,
-  onDelete,
-  kind = "market",
-}: {
-  title: string;
-  holdings: Holding[];
-  onDelete: (id: string) => void;
-  kind?: FormKind;
-}) {
-  const isAsset = kind === "asset";
-  const isOption = kind === "option";
-  return (
-    <div className="border border-gray-200 rounded-2xl overflow-hidden mb-6">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 text-sm font-semibold text-gray-700">
-        {title}
-      </div>
-      <table className="w-full text-sm">
-        <thead className="bg-white border-b border-gray-200">
-          <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
-            <th className="px-4 py-3">{isAsset ? "Asset" : isOption ? "Contract" : "Symbol"}</th>
-            <th className="px-4 py-3">Type</th>
-            <th className="px-4 py-3 text-right">{isAsset ? "" : isOption ? "Contracts" : "Qty"}</th>
-            <th className="px-4 py-3 text-right">
-              {isAsset ? "Purchase price" : isOption ? "Premium $/sh" : "Cost / share"}
-            </th>
-            {isAsset && <th className="px-4 py-3 text-right">Current value</th>}
-            {isOption && <th className="px-4 py-3 text-right">Total premium</th>}
-            <th className="px-4 py-3 text-right"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {holdings.map((h) => (
-            <tr key={h.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-              <td className="px-4 py-3">
-                <div className="font-medium text-gray-900">
-                  {isAsset || isOption ? (h.name || h.symbol) : h.symbol}
-                </div>
-                {!isAsset && !isOption && h.name && (
-                  <div className="text-xs text-gray-500 truncate max-w-[200px]">{h.name}</div>
-                )}
-              </td>
-              <td className="px-4 py-3 text-xs text-gray-600">
-                {TYPE_LABEL[h.security_type] || h.security_type}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {isAsset ? "" : h.quantity}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                ${Number(h.cost_basis).toFixed(2)}
-              </td>
-              {isAsset && (
-                <td className="px-4 py-3 text-right tabular-nums">
-                  ${Number(h.current_value || 0).toLocaleString()}
-                </td>
-              )}
-              {isOption && (
-                <td className="px-4 py-3 text-right tabular-nums">
-                  ${(Number(h.quantity) * Number(h.cost_basis) * 100).toLocaleString()}
-                </td>
-              )}
-              <td className="px-4 py-3 text-right">
-                <button
-                  onClick={() => onDelete(h.id)}
-                  className="text-xs text-red-600 hover:text-red-800 transition"
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

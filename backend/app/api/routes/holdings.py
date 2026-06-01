@@ -44,7 +44,8 @@ class HoldingCreate(BaseModel):
     symbol: str | None = Field(default=None, max_length=40)
     name: str | None = None
     security_type: str = "stock"
-    quantity: float = Field(gt=0)
+    # Negative quantity = short position (matches IBKR sync), so no gt=0 bound.
+    quantity: float
     cost_basis: float = Field(ge=0)
     # For non-market assets (real_estate / vehicle / other): the user's
     # current valuation. Ignored / overwritten for market types.
@@ -57,7 +58,7 @@ class HoldingCreate(BaseModel):
 
 
 class HoldingUpdate(BaseModel):
-    quantity: float | None = Field(default=None, gt=0)
+    quantity: float | None = None
     cost_basis: float | None = Field(default=None, ge=0)
     name: str | None = None
     current_value: float | None = Field(default=None, ge=0)

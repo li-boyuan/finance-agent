@@ -8,7 +8,7 @@ Personal finance advisor app (chat + portfolio dashboard) built for the owner's 
 - **Portfolio dashboard** at `/dashboard/portfolio`: live quotes (5-min cache), allocation donut, per-position table, stocks/ETFs/crypto/options/real estate/vehicles/other.
 - **Chat tool use**: Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions during chat. UI shows tool-call pills.
 - **IBKR live sync** via self-hosted Client Portal Gateway: `/dashboard/holdings` has a "Connect IBKR" panel; sync pulls positions and replaces the IBKR account's holdings (full-replace strategy, not incremental).
-- **Options support**: full OCC symbol round-trip, long + short with correct P&L math, grouped under their underlying ticker on the portfolio dashboard.
+- **Options support**: full OCC symbol round-trip, long + short with correct P&L math, grouped under their underlying ticker on both the portfolio dashboard and the holdings manager.
 
 ## Architecture quick map
 
@@ -18,7 +18,9 @@ Personal finance advisor app (chat + portfolio dashboard) built for the owner's 
 - `backend/app/services/ibkr.py` — strategy factory (`build_client_for_connection`). Gateway implemented; OAuth 1.0a left as an explicit `NotImplementedError` seam.
 - `backend/app/services/ibkr_positions.py` — maps IBKR positions to `holdings` rows. Options are parsed out of `contractDesc`'s bracketed OCC suffix (IBKR doesn't populate structured strike/expiry on the gateway).
 - `backend/app/services/options.py` — OCC build/parse + `CONTRACT_MULTIPLIER = 100`.
-- `frontend/app/dashboard/portfolio/page.tsx` — grouped-by-underlying portfolio table.
+- `frontend/components/portfolio/` — shared grouped-by-underlying table (`GroupedHoldingsTable.tsx`, optional `onDelete` adds an actions column) + grouping helpers/types (`grouping.ts`). One implementation, used by both dashboards.
+- `frontend/app/dashboard/portfolio/page.tsx` — portfolio dashboard: donut + shared grouped table (read-only).
+- `frontend/app/dashboard/holdings/page.tsx` — holdings manager: add form + IBKR panel + the shared grouped table with a Delete column. Reads the enriched `/api/portfolio/summary` (not raw `/api/holdings/`).
 - `frontend/app/dashboard/holdings/IBKRConnect.tsx` — connect + sync UI.
 - `supabase/migrations/` — apply in order. Latest: `005_account_auth_config.sql` (jsonb auth config on `account_connections`).
 
@@ -56,7 +58,7 @@ cd ~/ibkr-gateway   # wherever clientportal.gw was unzipped
 - **IBKR gateway returns empty `strike`/`expirationDate`/`putOrCall`** on at least the current version. Real data is in the bracketed suffix of `contractDesc`. `IBKR_BRACKET_OCC_RE` in `ibkr_positions.py` parses it.
 - **Don't confuse "IB Gateway" with "Client Portal API Gateway"** — different products, different protocols. We use Client Portal (HTTPS, port 5000).
 - **IBKR sync is full-replace** for the IBKR-account holdings. Manual holdings on other accounts are never touched.
-- **Short positions** are stored with negative quantity. Percentages use `abs(denominator)` in `portfolio.py` so the sign comes from the numerator and reflects position direction.
+- **Short positions** are stored with negative quantity. Percentages use `abs(denominator)` in `portfolio.py` so the sign comes from the numerator and reflects position direction. The manual add/edit form and `HoldingCreate`/`HoldingUpdate` accept negative quantities (no `gt=0` bound) so hand-entered shorts match synced ones.
 
 ## Open follow-ups (in rough priority)
 
@@ -64,8 +66,6 @@ cd ~/ibkr-gateway   # wherever clientportal.gw was unzipped
 2. **Multi-IBKR-account support** — currently uses `accounts[0]` from the gateway. Real users have margin + IRA + paper.
 3. **Plaid integration** for Fidelity + bank spending. Drop into the same `account_connections` table; `auth_config = {"strategy": "plaid", ...}`.
 4. **IBKR OAuth 1.0a** — replaces `NotImplementedError` in `services/ibkr.py`. 2-4 week IBKR approval blocker; only worth doing if going SaaS.
-5. **Holdings page polish** — same ticker grouping as portfolio dashboard (currently the holdings page still has the old market/options/assets split).
-6. **Short-quantity rendering on holdings page** — the IBKR sync writes negative quantities now, but the holdings page's add/edit form still has `quantity: Field(gt=0)`. The manual flow is fine; just check that displays handle negatives.
 
 ## Roadmap status (matches README)
 
