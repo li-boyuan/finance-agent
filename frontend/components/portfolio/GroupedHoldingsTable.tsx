@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import {
   HoldingGroup,
   HoldingRow,
@@ -8,16 +11,31 @@ import {
   TYPE_BADGE,
 } from "./grouping";
 
-// Shared grouped-by-underlying holdings table. Read-only by default; pass
-// onDelete to render a trailing actions column (used by the holdings manager).
+// Shared grouped-by-underlying holdings table.
+//   onDelete    — renders a trailing actions column (holdings manager).
+//   collapsible — group rows start collapsed and expand on click (portfolio
+//                 overview). A group gets a header when it has >1 position, is
+//                 the assets bucket, or (collapsible) is a lone option — so a
+//                 single option still shows under its underlying ticker.
 export function GroupedHoldingsTable({
   holdings,
   onDelete,
+  collapsible = false,
 }: {
   holdings: HoldingRow[];
   onDelete?: (id: string) => void;
+  collapsible?: boolean;
 }) {
   const groups = buildGroups(holdings);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   return (
     <table className="w-full text-sm">
       <thead className="bg-gray-50 border-b border-gray-200">
@@ -33,13 +51,26 @@ export function GroupedHoldingsTable({
       </thead>
       <tbody>
         {groups.map((g) => {
-          const showHeader = g.rows.length > 1 || g.key === "__assets__";
+          const loneOption =
+            g.rows.length === 1 && !!g.rows[0].is_option;
+          const hasHeader =
+            g.rows.length > 1 ||
+            g.key === "__assets__" ||
+            (collapsible && loneOption);
+          const expandable = collapsible && hasHeader;
+          // Single-position groups (no header) always show their one row.
+          const showChildren = !expandable || expanded.has(g.key);
           return (
             <GroupRows
               key={g.key}
               group={g}
-              showHeader={showHeader}
+              showHeader={hasHeader}
+              collapsible={collapsible}
               onDelete={onDelete}
+              expandable={expandable}
+              expanded={expanded.has(g.key)}
+              onToggle={() => toggle(g.key)}
+              showChildren={showChildren}
             />
           );
         })}
@@ -48,21 +79,57 @@ export function GroupedHoldingsTable({
   );
 }
 
+function Caret({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      className="shrink-0 text-gray-400 transition-transform duration-200 ease-out"
+      style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+    >
+      <path
+        d="M6 4l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function GroupRows({
   group,
   showHeader,
+  collapsible,
   onDelete,
+  expandable,
+  expanded,
+  onToggle,
+  showChildren,
 }: {
   group: HoldingGroup;
   showHeader: boolean;
+  collapsible: boolean;
   onDelete?: (id: string) => void;
+  expandable: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  showChildren: boolean;
 }) {
   return (
     <>
       {showHeader && (
-        <tr className="bg-gray-50 border-b border-gray-200">
+        <tr
+          className={`border-b border-gray-200 transition-colors ${expandable ? "cursor-pointer hover:bg-gray-50" : "bg-gray-50"}`}
+          onClick={expandable ? onToggle : undefined}
+        >
           <td className="px-4 py-2.5">
             <div className="flex items-center gap-2">
+              {expandable && <Caret expanded={expanded} />}
               <span className="font-semibold text-gray-900">{group.label}</span>
               <span className="text-xs text-gray-500">
                 {group.rows.length} position{group.rows.length === 1 ? "" : "s"}
@@ -70,8 +137,8 @@ function GroupRows({
             </div>
           </td>
           <td colSpan={2}></td>
-          <td className={`px-4 py-2.5 text-right tabular-nums text-xs ${colorClass(group.totalDayChange)}`}>
-            {fmtCurrency(group.totalDayChange)}
+          <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${colorClass(group.totalDayChange)}`}>
+            {fmtPct(group.totalDayChangePct)}
           </td>
           <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
             {fmtCurrency(group.totalValue)}
@@ -82,14 +149,20 @@ function GroupRows({
           {onDelete && <td></td>}
         </tr>
       )}
-      {group.rows.map((h) => (
-        <HoldingTableRow
-          key={h.id}
-          holding={h}
-          indented={showHeader}
-          onDelete={onDelete}
-        />
-      ))}
+      {showChildren &&
+        group.rows.map((h, i) => (
+          <HoldingTableRow
+            key={h.id}
+            holding={h}
+            indented={showHeader}
+            // Top-level single-position rows in collapsible mode get a gutter so
+            // their ticker lines up with the chevroned group rows (siblings).
+            leadSpacer={collapsible && !showHeader}
+            animateIn={expandable}
+            animateIndex={i}
+            onDelete={onDelete}
+          />
+        ))}
     </>
   );
 }
@@ -97,18 +170,30 @@ function GroupRows({
 function HoldingTableRow({
   holding: h,
   indented,
+  leadSpacer = false,
+  animateIn = false,
+  animateIndex = 0,
   onDelete,
 }: {
   holding: HoldingRow;
   indented: boolean;
+  leadSpacer?: boolean;
+  animateIn?: boolean;
+  animateIndex?: number;
   onDelete?: (id: string) => void;
 }) {
   const displayName = h.is_option ? (h.name || h.symbol) : (h.is_market ? h.symbol : h.name);
   return (
-    <tr className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+    <tr
+      className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${animateIn ? "animate-row-in" : ""}`}
+      style={animateIn ? { animationDelay: `${animateIndex * 35}ms` } : undefined}
+    >
       <td className={`px-4 py-3 ${indented ? "pl-8" : ""}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-gray-900">{displayName}</span>
+          {leadSpacer && <span className="w-3.5 inline-block" aria-hidden />}
+          <span className={`${leadSpacer ? "font-semibold" : "font-medium"} text-gray-900`}>
+            {displayName}
+          </span>
           <span className="text-[10px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
             {TYPE_BADGE[h.security_type] || h.security_type.slice(0, 3).toUpperCase()}
           </span>
@@ -119,7 +204,9 @@ function HoldingTableRow({
           )}
         </div>
         {h.is_market && !h.is_option && h.name && (
-          <div className="text-xs text-gray-500 truncate max-w-[220px]">{h.name}</div>
+          <div className={`text-xs text-gray-500 truncate max-w-[220px] ${leadSpacer ? "pl-[22px]" : ""}`}>
+            {h.name}
+          </div>
         )}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-gray-700">

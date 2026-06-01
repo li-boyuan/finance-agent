@@ -36,6 +36,7 @@ export interface HoldingGroup {
   totalReturn: number;
   totalReturnPct: number;
   totalDayChange: number;
+  totalDayChangePct: number;
 }
 
 export interface PortfolioSummary {
@@ -61,10 +62,21 @@ export const TYPE_BADGE: Record<string, string> = {
   other: "OTH",
 };
 
+// Symbols that should display under another group — e.g. a leveraged ETF shown
+// with the underlying it tracks. Applied to the grouping key only; each holding
+// keeps its own real symbol, price, and P&L.
+const GROUP_ALIASES: Record<string, string> = {
+  HIMZ: "HIMS", // Defiance Daily Target 2x Long HIMS ETF → group under HIMS
+};
+
 export function groupingKey(h: HoldingRow): string {
-  if (h.is_option && h.option_meta) return h.option_meta.underlying;
-  if (h.is_market) return h.symbol;
-  return "__assets__";
+  const raw =
+    h.is_option && h.option_meta
+      ? h.option_meta.underlying
+      : h.is_market
+        ? h.symbol
+        : "__assets__";
+  return GROUP_ALIASES[raw] ?? raw;
 }
 
 export function buildGroups(holdings: HoldingRow[]): HoldingGroup[] {
@@ -90,10 +102,13 @@ export function buildGroups(holdings: HoldingRow[]): HoldingGroup[] {
     const totalReturn = rows.reduce((s: number, r: HoldingRow) => s + r.total_return, 0);
     const totalDayChange = rows.reduce((s: number, r: HoldingRow) => s + r.day_change, 0);
     const totalReturnPct = totalCost ? (totalReturn / Math.abs(totalCost)) * 100 : 0;
+    // Group day % = today's net $ change over yesterday's net value (totalValue - totalDayChange).
+    const totalPrevValue = totalValue - totalDayChange;
+    const totalDayChangePct = totalPrevValue ? (totalDayChange / Math.abs(totalPrevValue)) * 100 : 0;
     const label = key === "__assets__" ? "Other Assets" : key;
     return {
       key, label, rows,
-      totalValue, totalCost, totalReturn, totalReturnPct, totalDayChange,
+      totalValue, totalCost, totalReturn, totalReturnPct, totalDayChange, totalDayChangePct,
     };
   });
   // Sort groups by absolute exposure so big shorts stay near the top.
