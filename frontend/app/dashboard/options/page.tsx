@@ -16,6 +16,8 @@ interface UnderlyingRow {
   net_share_delta: number | null;
   delta_dollars: number | null;
   theta_day: number | null;
+  net_vega: number;
+  scenario_pl: number | null;
   delta_partial: boolean;
 }
 
@@ -45,6 +47,33 @@ interface FlagLeg {
   total_return_pct: number;
 }
 
+interface Indicator {
+  key: string;
+  label: string;
+  value: number | null;
+  display: string;
+  rating: string | null;
+}
+
+interface Margin {
+  net_liquidation: number;
+  excess_liquidity: number | null;
+  buying_power: number | null;
+  maint_margin: number | null;
+  gross_position_value: number | null;
+  margin_util: number | null;
+  leverage: number | null;
+  as_of: string | null;
+}
+
+interface Scenario {
+  move_pct: number;
+  iv_points: number;
+  pl: number;
+  pl_pct_nlv: number | null;
+  partial: boolean;
+}
+
 interface Analytics {
   as_of: string;
   has_greeks: boolean;
@@ -55,11 +84,24 @@ interface Analytics {
     assignment_risk: number;
     net_delta_dollars: number;
     theta_day: number;
+    net_vega: number;
+    scenario_pl: number;
   };
   underlyings: UnderlyingRow[];
   expirations: Expiration[];
   flags: FlagLeg[];
+  margin: Margin | null;
+  scenario: Scenario;
+  indicators: Indicator[];
+  overall_rating: string | null;
 }
+
+const RATING_STYLE: Record<string, { text: string; bg: string; border: string; label: string }> = {
+  conservative: { text: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200", label: "Conservative" },
+  moderate: { text: "text-amber-700", bg: "bg-amber-50", border: "border-amber-200", label: "Moderate" },
+  aggressive: { text: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200", label: "Aggressive" },
+  high: { text: "text-red-700", bg: "bg-red-50", border: "border-red-200", label: "High risk" },
+};
 
 function fmtExpiry(iso: string) {
   const d = new Date(iso + "T00:00:00");
@@ -164,6 +206,22 @@ export default function OptionsPage() {
               </div>
             )}
 
+            <RiskScorecard
+              overall={data.overall_rating}
+              indicators={data.indicators}
+              scenario={data.scenario}
+            />
+
+            {data.margin ? (
+              <MarginPanel margin={data.margin} />
+            ) : (
+              <div className="mb-8 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                Apply migration <code className="font-mono">007_account_balances.sql</code> and re-sync IBKR to
+                see margin, buying power, and the account-relative risk ratings (utilization, leverage,
+                concentration, shock loss).
+              </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
               <StatCard label="Net Δ$ exposure" value={fmtCurrency(data.totals.net_delta_dollars)} />
               <StatCard
@@ -231,31 +289,8 @@ export default function OptionsPage() {
               )}
             </Section>
 
-            <Section title="Expirations">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                    <th className="px-4 py-3">Expiry</th>
-                    <th className="px-4 py-3 text-right">DTE</th>
-                    <th className="px-4 py-3 text-right">Legs</th>
-                    <th className="px-4 py-3 text-right">Net value</th>
-                    <th className="px-4 py-3">Tickers</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.expirations.map((e) => (
-                    <tr key={e.expiry} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{fmtExpiry(e.expiry)}</td>
-                      <td className={`px-4 py-3 text-right tabular-nums ${e.dte != null && e.dte <= 7 ? "text-amber-600 font-medium" : "text-gray-600"}`}>
-                        {e.dte != null ? `${e.dte}d` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-500">{e.leg_count}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{fmtCurrency(e.net_value)}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500 truncate max-w-[280px]">{e.underlyings.join(", ")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <Section title="Expirations timeline">
+              <ExpirationsTimeline expirations={data.expirations} />
             </Section>
 
             {data.flags.length > 0 && (
@@ -315,6 +350,160 @@ export default function OptionsPage() {
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RatingBadge({ rating, big }: { rating: string; big?: boolean }) {
+  const s = RATING_STYLE[rating] || RATING_STYLE.moderate;
+  return (
+    <span className={`inline-block font-semibold rounded border ${s.bg} ${s.text} ${s.border} ${big ? "text-sm px-2.5 py-1" : "text-[10px] px-1.5 py-0.5"}`}>
+      {s.label}
+    </span>
+  );
+}
+
+function RiskScorecard({
+  overall,
+  indicators,
+  scenario,
+}: {
+  overall: string | null;
+  indicators: Indicator[];
+  scenario: Scenario;
+}) {
+  return (
+    <div className="border border-gray-200 rounded-2xl p-5 mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">Aggressiveness</h3>
+        {overall ? (
+          <RatingBadge rating={overall} big />
+        ) : (
+          <span className="text-xs text-gray-400">sync IBKR for margin-based rating</span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {indicators.map((i) => (
+          <div
+            key={i.key}
+            className={`rounded-xl border p-3 ${i.rating ? RATING_STYLE[i.rating].border : "border-gray-200"}`}
+          >
+            <div className="text-xs text-gray-500">{i.label}</div>
+            <div className="mt-1 text-xl font-semibold tabular-nums text-gray-900">{i.display}</div>
+            <div className="mt-1.5">
+              {i.rating ? (
+                <RatingBadge rating={i.rating} />
+              ) : (
+                <span className="text-[10px] text-gray-400">needs margin sync</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 text-sm text-gray-600">
+        Risk shock ({(scenario.move_pct * 100).toFixed(0)}% &amp; +{scenario.iv_points} IV pts):{" "}
+        <span className={`font-semibold ${colorClass(scenario.pl)}`}>{fmtCurrency(scenario.pl)}</span>
+        {scenario.pl_pct_nlv != null && (
+          <span className="text-gray-500"> ({(scenario.pl_pct_nlv * 100).toFixed(0)}% of NLV)</span>
+        )}
+        {scenario.partial && (
+          <span className="text-xs text-amber-600"> · partial — some legs missing greeks</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MarginPanel({ margin }: { margin: Margin }) {
+  const util = margin.margin_util;
+  const utilColor = util == null ? "bg-gray-300" : util < 0.5 ? "bg-emerald-400" : util < 0.75 ? "bg-amber-400" : "bg-red-400";
+  const cells: { label: string; value: string }[] = [
+    { label: "Net liquidation", value: fmtCurrency(margin.net_liquidation) },
+    { label: "Excess liquidity", value: margin.excess_liquidity != null ? fmtCurrency(margin.excess_liquidity) : "—" },
+    { label: "Buying power", value: margin.buying_power != null ? fmtCurrency(margin.buying_power) : "—" },
+    { label: "Maint margin", value: margin.maint_margin != null ? fmtCurrency(margin.maint_margin) : "—" },
+  ];
+  return (
+    <Section title="Margin & buying power">
+      <div className="p-5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+          {cells.map((c) => (
+            <div key={c.label}>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{c.label}</div>
+              <div className="mt-1 text-lg font-semibold tabular-nums text-gray-900">{c.value}</div>
+            </div>
+          ))}
+        </div>
+        {util != null && (
+          <div>
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Margin utilization (maint ÷ NLV)</span>
+              <span className="tabular-nums">{(util * 100).toFixed(0)}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div className={`h-full rounded-full ${utilColor}`} style={{ width: `${Math.min(util * 100, 100)}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function ExpirationsTimeline({ expirations }: { expirations: Expiration[] }) {
+  const maxAbs = Math.max(1, ...expirations.map((e) => Math.abs(e.net_value)));
+  return (
+    <div className="p-5">
+      <div className="flex items-center gap-3 mb-5 text-[11px] text-gray-400">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" /> ≤7d</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> ≤30d</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> later</span>
+        <span className="ml-auto">bar ∝ |net value|</span>
+      </div>
+      <div className="relative">
+        {/* the timeline spine */}
+        <div className="absolute left-2 top-1 bottom-1 w-px bg-gray-200" />
+        <div className="space-y-5">
+          {expirations.map((e) => {
+            const near = e.dte != null && e.dte <= 7;
+            const soon = e.dte != null && e.dte <= 30;
+            const pct = Math.max(2, (Math.abs(e.net_value) / maxAbs) * 100);
+            const dot = near ? "bg-red-500" : soon ? "bg-amber-500" : "bg-emerald-500";
+            return (
+              <div key={e.expiry} className="relative pl-8">
+                <div className={`absolute left-[3px] top-1.5 w-3 h-3 rounded-full border-2 border-white ${dot}`} />
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-semibold text-gray-900">{fmtExpiry(e.expiry)}</span>
+                    <span className={`text-xs ${near ? "text-red-600 font-medium" : soon ? "text-amber-600" : "text-gray-400"}`}>
+                      {e.dte != null ? `${e.dte}d` : ""}
+                    </span>
+                  </div>
+                  <span className={`text-sm tabular-nums font-medium ${colorClass(e.net_value)}`}>
+                    {fmtCurrency(e.net_value)}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${e.net_value >= 0 ? "bg-emerald-400" : "bg-rose-400"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-gray-500 mr-1">
+                    {e.leg_count} leg{e.leg_count === 1 ? "" : "s"}
+                  </span>
+                  {e.underlyings.map((u) => (
+                    <span key={u} className="text-[10px] font-semibold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                      {u}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
