@@ -5,7 +5,12 @@ from datetime import date as date_cls
 # Index options can differ but we treat all as 100 for MVP.
 CONTRACT_MULTIPLIER = 100
 
-OCC_RE = re.compile(r"^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
+# An OSI option symbol's tail is fixed-width: YYMMDD (6) + C/P (1) + strike (8)
+# = 15 chars. The root precedes it. We parse from the right so any root length
+# works — including adjusted-option roots that carry a trailing digit from a
+# corporate action (e.g. "GME1").
+_OCC_TAIL_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
+_OCC_ROOT_RE = re.compile(r"^[A-Z][A-Z0-9]{0,5}$")
 
 
 def build_occ_symbol(underlying: str, expiry: str, strike: float, option_type: str) -> str:
@@ -31,10 +36,17 @@ def build_occ_symbol(underlying: str, expiry: str, strike: float, option_type: s
 
 
 def parse_occ_symbol(occ: str) -> dict | None:
-    m = OCC_RE.match(occ)
-    if not m:
+    occ = (occ or "").strip().upper()
+    if len(occ) < 16:  # 1-char root + 15-char tail minimum
         return None
-    underlying, yy, mm, dd, otype, strike_raw = m.groups()
+    root, tail = occ[:-15], occ[-15:]
+    tm = _OCC_TAIL_RE.match(tail)
+    if not tm or not _OCC_ROOT_RE.match(root):
+        return None
+    yy, mm, dd, otype, strike_raw = tm.groups()
+    # Strip the trailing adjustment digit so adjusted options group under their
+    # base underlying (e.g. GME1 -> GME).
+    underlying = root.rstrip("0123456789") or root
     return {
         "underlying": underlying,
         "expiry": f"20{yy}-{mm}-{dd}",
