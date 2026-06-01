@@ -146,7 +146,7 @@ finance-agent/
 ### Options analytics
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/options/analytics` | Per-underlying delta-adjusted exposure (from IBKR greeks), expiration calendar, moneyness, and assignment-risk / near-expiry flags |
+| GET | `/api/options/analytics` | Per-underlying delta-adjusted exposure + theta/day (from IBKR greeks), portfolio-level net Δ$ / theta, expiration calendar, moneyness, and assignment-risk / near-expiry flags |
 
 ### Accounts, transactions, budgets, goals (read-only stubs until Plaid lands)
 | Method | Path | Description |
@@ -312,7 +312,7 @@ The gateway session lasts ~24 hours. After it expires, log in via the browser ag
 | **v2b — Chat tool use over portfolio** | ✅ Shipped | Claude can call `get_portfolio_summary` and `list_holdings` to reason over real positions, allocation, and returns. Streaming surfaces tool-call status in the chat UI; tool calls persisted on assistant messages |
 | **v2c — IBKR live sync (self-hosted gateway)** | ✅ Shipped | Connect to IBKR's Client Portal Gateway, sync live positions into `holdings` with one click. Parses options from `contractDesc` (IBKR doesn't populate structured strike/expiry fields on the gateway), preserves long/short sign so P&L math is correct on credit spreads and naked shorts, and groups stock + related options by underlying ticker on the dashboard (including corporate-action-adjusted roots like `GME1` → `GME`). Designed so OAuth 1.0a can drop in later as a second auth strategy without schema changes |
 | **v2d — Plaid integration** | ⏳ Next | Plaid Link for banks (spending) and brokerages (Fidelity etc., auto-synced holdings); transaction-aware tool use |
-| **v2e — Options analytics** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure from IBKR model greeks (captured at sync into `holdings.greeks`), expiration calendar with DTE, moneyness + intrinsic/extrinsic, and assignment-risk / near-expiry flags |
+| **v2e — Options analytics** | ✅ Shipped | `/dashboard/options`: per-underlying delta-adjusted exposure + theta/day from IBKR model greeks (captured at sync into `holdings.greeks`), portfolio-level net Δ$ and theta/day, expiration calendar with DTE, moneyness + intrinsic/extrinsic, and assignment-risk / near-expiry flags |
 | **v3 — Analytics dashboard** | ⏳ | Net worth over time, spending by category, budget vs actual, portfolio allocation, weekly AI insight card |
 | **v4 — SaaS polish** | ⏳ | Stripe billing, onboarding wizard, marketing landing, transactional emails (Resend), social login (Clerk?) |
 | **v5 — Power features** | ⏳ | Conversation export, copy / regenerate, suggested follow-ups, share read-only links |
