@@ -1,9 +1,10 @@
-"""Options analytics: delta-adjusted exposure, expiration calendar, risk flags.
+"""Options analytics: delta-adjusted exposure, theta, expiration calendar, flags.
 
 Builds on compute_portfolio_summary (single source of truth for enrichment).
-Delta comes from IBKR model greeks stored on the holding at sync time; the
-calendar, moneyness, intrinsic/extrinsic split, and assignment-risk flags are
-derived from data we already have (strike/expiry/type/qty + underlying spot).
+Greeks (delta, theta) come from IBKR model values stored on the holding at sync
+time; legs IBKR doesn't quote (adjusted / illiquid) simply show no delta. The
+calendar, moneyness, intrinsic/extrinsic split, and assignment-risk flags derive
+from data we already have (strike/expiry/type/qty + underlying spot).
 """
 
 from datetime import date as date_cls
@@ -20,7 +21,10 @@ def _empty(today: str) -> dict:
     return {
         "as_of": today,
         "has_greeks": False,
-        "totals": {"option_value": 0, "leg_count": 0, "near_expiry": 0, "assignment_risk": 0},
+        "totals": {
+            "option_value": 0, "leg_count": 0, "near_expiry": 0,
+            "assignment_risk": 0, "net_delta_dollars": 0, "theta_day": 0,
+        },
         "underlyings": [],
         "expirations": [],
         "flags": [],
@@ -38,7 +42,7 @@ async def compute_options_analytics(db, user_id: str) -> dict:
     # Greeks live on the holdings.greeks jsonb column (migration 006), populated
     # by the IBKR sync. Fetched here rather than in compute_portfolio_summary so
     # the core portfolio path doesn't depend on the column — and so this degrades
-    # gracefully (no delta) if the migration hasn't been applied yet.
+    # gracefully if the migration hasn't been applied yet.
     greeks_by_id: dict = {}
     option_ids = [h["id"] for h in options]
     try:
@@ -58,7 +62,6 @@ async def compute_options_analytics(db, user_id: str) -> dict:
             stock_shares[h["symbol"]] = stock_shares.get(h["symbol"], 0.0) + h["quantity"]
 
     legs: list[dict] = []
-    has_greeks = False
     for h in options:
         m = h["option_meta"]
         u = m["underlying"]
@@ -79,12 +82,14 @@ async def compute_options_analytics(db, user_id: str) -> dict:
             itm = intrinsic_ps > 0
         extrinsic_ps = (h["price"] - intrinsic_ps) if intrinsic_ps is not None else None
 
-        # IBKR delta is the long-contract delta; multiplying by signed qty gives
-        # the position's directional exposure (short call -> negative, etc.).
-        delta = (greeks_by_id.get(h["id"]) or {}).get("delta")
-        if delta is not None:
-            has_greeks = True
+        # IBKR delta/theta are long-contract, per-share; multiplying by signed
+        # qty gives the position's exposure (short call -> negative delta; short
+        # option -> positive theta). Legs IBKR doesn't quote show no delta.
+        g = greeks_by_id.get(h["id"]) or {}
+        delta = g.get("delta")
+        theta_ps = g.get("theta")
         share_delta = (delta * qty * CONTRACT_MULTIPLIER) if delta is not None else None
+        theta_day = (theta_ps * qty * CONTRACT_MULTIPLIER) if theta_ps is not None else None
 
         is_short = qty < 0
         legs.append({
@@ -102,18 +107,20 @@ async def compute_options_analytics(db, user_id: str) -> dict:
             "intrinsic_value": round(intrinsic_ps * qty * CONTRACT_MULTIPLIER, 2) if intrinsic_ps is not None else None,
             "extrinsic_value": round(extrinsic_ps * qty * CONTRACT_MULTIPLIER, 2) if extrinsic_ps is not None else None,
             "value": h["value"],
-            "delta": delta,
+            "delta": round(delta, 4) if delta is not None else None,
             "share_delta": round(share_delta, 1) if share_delta is not None else None,
+            "theta_day": round(theta_day, 2) if theta_day is not None else None,
             "assignment_risk": bool(is_short and itm and dte is not None and dte <= ASSIGNMENT_RISK_DTE),
             "near_expiry": bool(dte is not None and dte <= NEAR_EXPIRY_DTE),
             "total_return_pct": h["total_return_pct"],
         })
 
     # Per-underlying aggregation. Net delta needs every leg's delta to be
-    # meaningful, so we only report it once at least one leg has greeks and mark
-    # it partial if some are missing.
+    # meaningful, so we only report it once at least one leg has a delta and mark
+    # it partial if some are still missing.
     agg: dict[str, dict] = {
-        u: {"option_value": 0.0, "leg_count": 0, "delta_sum": 0.0, "legs_with_delta": 0}
+        u: {"option_value": 0.0, "leg_count": 0, "delta_sum": 0.0, "legs_with_delta": 0,
+            "theta_sum": 0.0, "legs_with_theta": 0}
         for u in underlyings
     }
     for leg in legs:
@@ -123,6 +130,9 @@ async def compute_options_analytics(db, user_id: str) -> dict:
         if leg["share_delta"] is not None:
             a["delta_sum"] += leg["share_delta"]
             a["legs_with_delta"] += 1
+        if leg["theta_day"] is not None:
+            a["theta_sum"] += leg["theta_day"]
+            a["legs_with_theta"] += 1
 
     underlying_rows = []
     for u, a in agg.items():
@@ -139,6 +149,7 @@ async def compute_options_analytics(db, user_id: str) -> dict:
             "leg_count": a["leg_count"],
             "net_share_delta": round(net_share_delta, 1) if net_share_delta is not None else None,
             "delta_dollars": round(delta_dollars, 2) if delta_dollars is not None else None,
+            "theta_day": round(a["theta_sum"], 2) if a["legs_with_theta"] else None,
             "delta_partial": any_delta and a["legs_with_delta"] < a["leg_count"],
         })
     underlying_rows.sort(
@@ -177,12 +188,18 @@ async def compute_options_analytics(db, user_id: str) -> dict:
 
     return {
         "as_of": today.isoformat(),
-        "has_greeks": has_greeks,
+        "has_greeks": any(leg["delta"] is not None for leg in legs),
         "totals": {
             "option_value": round(sum(leg["value"] for leg in legs), 2),
             "leg_count": len(legs),
             "near_expiry": sum(1 for leg in legs if leg["near_expiry"]),
             "assignment_risk": sum(1 for leg in legs if leg["assignment_risk"]),
+            "net_delta_dollars": round(
+                sum(r["delta_dollars"] for r in underlying_rows if r["delta_dollars"] is not None), 2
+            ),
+            "theta_day": round(
+                sum(leg["theta_day"] for leg in legs if leg["theta_day"] is not None), 2
+            ),
         },
         "underlyings": underlying_rows,
         "expirations": expirations,

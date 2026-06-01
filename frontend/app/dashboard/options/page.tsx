@@ -15,6 +15,7 @@ interface UnderlyingRow {
   leg_count: number;
   net_share_delta: number | null;
   delta_dollars: number | null;
+  theta_day: number | null;
   delta_partial: boolean;
 }
 
@@ -38,6 +39,7 @@ interface FlagLeg {
   is_short: boolean;
   moneyness: string | null;
   value: number;
+  theta_day: number | null;
   assignment_risk: boolean;
   near_expiry: boolean;
   total_return_pct: number;
@@ -46,7 +48,14 @@ interface FlagLeg {
 interface Analytics {
   as_of: string;
   has_greeks: boolean;
-  totals: { option_value: number; leg_count: number; near_expiry: number; assignment_risk: number };
+  totals: {
+    option_value: number;
+    leg_count: number;
+    near_expiry: number;
+    assignment_risk: number;
+    net_delta_dollars: number;
+    theta_day: number;
+  };
   underlyings: UnderlyingRow[];
   expirations: Expiration[];
   flags: FlagLeg[];
@@ -155,7 +164,13 @@ export default function OptionsPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+              <StatCard label="Net Δ$ exposure" value={fmtCurrency(data.totals.net_delta_dollars)} />
+              <StatCard
+                label="Theta / day"
+                value={fmtCurrency(data.totals.theta_day)}
+                color={colorClass(data.totals.theta_day)}
+              />
               <StatCard label="Option Value (net)" value={fmtCurrency(data.totals.option_value)} />
               <StatCard label="Legs" value={String(data.totals.leg_count)} />
               <StatCard
@@ -178,6 +193,7 @@ export default function OptionsPage() {
                     <th className="px-4 py-3 text-right">Spot</th>
                     <th className="px-4 py-3 text-right">Net Δ (sh)</th>
                     <th className="px-4 py-3 text-right">Δ$ exposure</th>
+                    <th className="px-4 py-3 text-right">Theta/day</th>
                     <th className="px-4 py-3 text-right">Option value</th>
                     <th className="px-4 py-3 text-right">Legs</th>
                   </tr>
@@ -199,6 +215,9 @@ export default function OptionsPage() {
                       <td className="px-4 py-3 text-right tabular-nums">
                         {u.delta_dollars != null ? fmtCurrency(u.delta_dollars) : "—"}
                       </td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${u.theta_day != null ? colorClass(u.theta_day) : ""}`}>
+                        {u.theta_day != null ? fmtCurrency(u.theta_day) : "—"}
+                      </td>
                       <td className="px-4 py-3 text-right tabular-nums">{fmtCurrency(u.option_value)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-gray-500">{u.leg_count}</td>
                     </tr>
@@ -206,7 +225,9 @@ export default function OptionsPage() {
                 </tbody>
               </table>
               {data.underlyings.some((u) => u.delta_partial) && (
-                <div className="px-4 py-2 text-xs text-gray-400">* net delta is partial — some legs are missing greeks.</div>
+                <div className="px-4 py-2 text-xs text-gray-400">
+                  * net delta is partial — some legs are missing greeks (IBKR doesn’t quote adjusted / illiquid contracts).
+                </div>
               )}
             </Section>
 
@@ -245,6 +266,7 @@ export default function OptionsPage() {
                       <th className="px-4 py-3">Contract</th>
                       <th className="px-4 py-3">Flags</th>
                       <th className="px-4 py-3 text-right">DTE</th>
+                      <th className="px-4 py-3 text-right">Theta/day</th>
                       <th className="px-4 py-3 text-right">Qty</th>
                       <th className="px-4 py-3 text-right">Value</th>
                       <th className="px-4 py-3 text-right">Return</th>
@@ -278,6 +300,9 @@ export default function OptionsPage() {
                         </td>
                         <td className={`px-4 py-3 text-right tabular-nums ${f.dte != null && f.dte <= 7 ? "text-amber-600 font-medium" : "text-gray-600"}`}>
                           {f.dte != null ? `${f.dte}d` : "—"}
+                        </td>
+                        <td className={`px-4 py-3 text-right tabular-nums ${f.theta_day != null ? colorClass(f.theta_day) : ""}`}>
+                          {f.theta_day != null ? fmtCurrency(f.theta_day) : "—"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-gray-700">{f.quantity}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{fmtCurrency(f.value)}</td>
