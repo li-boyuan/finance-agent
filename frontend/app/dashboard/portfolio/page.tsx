@@ -130,23 +130,19 @@ export default function PortfolioPage() {
   // Group holdings by underlying ticker so stock + options for the same name appear together.
   const groups = buildGroups(summary.holdings);
 
-  // Donut sized by abs(value) so short positions still register, top 9 groups + rest.
+  // Allocation by net market value, sized by |net value| so a net-short group
+  // still registers as a slice. Every group gets its own slice; palette cycles
+  // if there are more groups than colors.
   const groupsByExposure = [...groups].sort(
     (a, b) => Math.abs(b.totalValue) - Math.abs(a.totalValue),
   );
-  const topGroups = groupsByExposure.slice(0, 9);
-  const restGroups = groupsByExposure.slice(9);
-  const restValue = restGroups.reduce((s, g) => s + Math.abs(g.totalValue), 0);
-  const donutData = [
-    ...topGroups.map((g, i) => ({
+  const donutData = groupsByExposure
+    .filter((g) => Math.abs(g.totalValue) > 0)
+    .map((g, i) => ({
       label: g.label === "Other Assets" ? "Assets" : g.label,
       value: Math.abs(g.totalValue),
-      color: PALETTE[i],
-    })),
-    ...(restValue > 0
-      ? [{ label: "Other", value: restValue, color: "#9ca3af" }]
-      : []),
-  ];
+      color: PALETTE[i % PALETTE.length],
+    }));
   const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
 
   return (
@@ -231,7 +227,7 @@ export default function PortfolioPage() {
               </div>
 
               <div className="lg:col-span-2 border border-gray-200 rounded-2xl overflow-hidden">
-                <GroupedHoldingsTable holdings={summary.holdings} />
+                <GroupedHoldingsTable holdings={summary.holdings} collapsible />
               </div>
             </div>
 
