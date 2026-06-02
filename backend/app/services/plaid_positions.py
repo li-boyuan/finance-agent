@@ -59,6 +59,7 @@ def sync_plaid_holdings(db, user_id: str, connection_id: str, payload: dict) -> 
             "connection_id": connection_id,
             "provider_account_id": plaid_acct_id,
             "name": _account_name(acct),
+            "mask": acct.get("mask"),
             "type": PLAID_ACCT_TYPE.get((acct.get("type") or "").lower(), "investment"),
             "subtype": acct.get("subtype"),
             "currency": ((acct.get("balances") or {}).get("iso_currency_code")) or "USD",
