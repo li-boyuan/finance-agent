@@ -42,3 +42,8 @@ htmlcov/
 
 # Docker
 docker-compose.override.yml
+
+# Local financial data — never commit account exports
+*.csv
+backend/tmp/
+Portfolio_Positions*.csv
