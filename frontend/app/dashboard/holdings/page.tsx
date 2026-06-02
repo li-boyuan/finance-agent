@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { IBKRConnect } from "./IBKRConnect";
 import { PlaidConnect } from "./PlaidConnect";
+import { FidelityImport } from "./FidelityImport";
 import { GroupedHoldingsTable } from "@/components/portfolio/GroupedHoldingsTable";
 import { PortfolioSummary } from "@/components/portfolio/grouping";
 
@@ -163,6 +164,8 @@ export default function HoldingsPage() {
         <IBKRConnect token={token} onSyncComplete={fetchSummary} />
 
         <PlaidConnect token={token} onSyncComplete={fetchSummary} />
+
+        <FidelityImport token={token} onSyncComplete={fetchSummary} />
 
         <div className="border border-gray-200 rounded-2xl p-6 mb-8">
           <h2 className="text-lg font-semibold mb-4">Add a holding manually</h2>
